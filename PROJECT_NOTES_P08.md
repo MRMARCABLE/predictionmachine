@@ -112,13 +112,32 @@ hasil = predict_and_explain(data_satu_mahasiswa, top_k=5)
 2. Pastikan folder `model/` beserta 3 file di dalamnya (`final_pipeline.joblib`, `model_metadata.json`, `demo_students.json`) terbentuk dan simpan notebook (`Ctrl + S`).
 
 ### Prioritas 2 — Perbaikan & Kelengkapan Data Engineer (Data Engineer)
-1. **Revisi `preprocess_data.py`**:
-   - Sesuaikan target dengan kesepakatan kelompok (jika Regresi: gunakan `curricular_units_2nd_sem_grade` dan hapus kolom Semester 2 lainnya serta `target` agar bebas *leakage*).
-   - Hapus langkah `StandardScaler` dan `OneHotEncoder` dari file serah terima utama; simpan `processed_data/train.csv` dan `processed_data/test.csv` (80/20, `random_state=42`) dalam bentuk 31 kolom asli.
-2. **Buat Notebook EDA (`eda_data_engineer.ipynb`)**:
-   - Memuat distribusi target, statistik deskriptif (`mean`, `std`, `min`, `max`), *heatmap* korelasi numerik terhadap target, *boxplot* target per kategori, analisis ketimpangan kategori, serta 3–5 temuan utama tertulis.
-3. **Buat Data Dictionary & Kamus Kode Kategori (`DATA_DICTIONARY.md`)**:
-   - Mencatat sumber dataset, DOI, lisensi, deskripsi 37 kolom asli, rentang nilai numerik, dan arti kode angka pada fitur kategori (misal arti kode jurusan pada `course`, kode pendidikan/pekerjaan orang tua, dll.) untuk dipakai pada label dropdown di `app.py`.
+
+#### A. Audit & Panduan Revisi Detail per Fungsi di `preprocess_data.py`
+Saat ini `preprocess_data.py` terbagi menjadi 6 bagian fungsi (Bagian A s/d Bagian F). Berikut adalah rincian bagian mana yang sudah benar dan bagian mana yang **wajib direvisi** oleh Data Engineer sesuai **Bab 2 & Bab 3 Panduan P08**:
+
+| Bagian di `preprocess_data.py` | Nama Fungsi | Status Audit | Instruksi Perbaikan untuk Data Engineer |
+| :---: | :--- | :---: | :--- |
+| **Bagian A** | `load_and_inspect()` | **Sudah Benar** | Pertahankan pengecekan ukuran awal (`4.424 × 37`), *missing values* (`0`), dan duplikat (`0`). Tambahkan inspeksi statistik target regresi `curricular_units_2nd_sem_grade`. |
+| **Bagian B** | `clean_and_filter_data()` | **Perlu Revisi** | 1. **Pertahankan** `clean_column_name()` (`snake_case` & perbaikan typo `nacionality` $\rightarrow$ `nationality`), penghapusan duplikat, dan koreksi anomali `application_order == 0` menjadi `1`.<br>2. **Hapus / Ubah Filter Klasifikasi Biner**: Jangan memfilter hanya `Dropout` vs `Graduate` untuk target utama, karena target proyek di Bab 4 adalah **Regresi (`curricular_units_2nd_sem_grade`)**. Selain itu, **buang 6 kolom penyebab *Target Leakage***: `target`, `curricular_units_2nd_sem_credited`, `curricular_units_2nd_sem_enrolled`, `curricular_units_2nd_sem_evaluations`, `curricular_units_2nd_sem_approved`, dan `curricular_units_2nd_sem_without_evaluations`. |
+| **Bagian C** | `engineer_features()` | **Perlu Revisi (Ada *Leakage*)** | 1. **Pertahankan hanya `approval_rate_1st_sem`** (`curricular_units_1st_sem_approved / curricular_units_1st_sem_enrolled`).<br>2. **WAJIB HAPUS 5 fitur rekayasa Semester 2**: `approval_rate_2nd_sem`, `grade_diff_sem2_sem1`, `approval_rate_diff`, `total_enrolled_units`, dan `total_approved_units`. Kelima fitur tersebut memakai data Semester 2 (bahkan `grade_diff_sem2_sem1` menggunakan nilai target `curricular_units_2nd_sem_grade` secara langsung!), sehingga menyebabkan **100% *Target Leakage***. |
+| **Bagian D** | `split_train_test()` | **Perlu Penyesuaian Target** | 1. Ubah pemisahan dari `y = df["target"]` menjadi `y = df["curricular_units_2nd_sem_grade"]` dan `X = df.drop(columns=["curricular_units_2nd_sem_grade"])`.<br>2. Gunakan `train_test_split(X, y, test_size=0.20, random_state=42)` (tanpa `stratify=y` karena `y` berupa angka kontinu regresi). |
+| **Bagian E** | `cap_outliers()` | **Opsional / Dokumentasikan** | *Winsorizing* persentil ke-1 dan ke-99 pada `age_at_enrollment`, `admission_grade`, dan `previous_qualification_grade` yang dihitung **hanya dari `X_train`** sudah aman dari *data leakage*. Jika tetap dipakai, catat statistik sebelum dan sesudah *capping* sesuai Bab 3 Langkah 5. |
+| **Bagian F** | `encode_scale_and_save()` | **Salah Prosedur (Wajib Diubah)** | **Aturan Bab 3 Langkah 6 Panduan P08**: *"Tidak perlu scaling. Decision Tree dan Random Forest tidak membutuhkan normalisasi. Encoding kategorikal sebaiknya dibuat ML engineer di dalam Pipeline (`ColumnTransformer` dan `OneHotEncoder`) supaya training dan aplikasi memakai transformasi yang sama. Tugas data engineer adalah menyerahkan data bersih dengan tipe yang benar."*<br>**Perbaikan**:<br>- **Hapus `StandardScaler()` dan `OneHotEncoder()` dari `preprocess_data.py`**.<br>- Pastikan tipe data kolom sesuai (9 kolom kategori nominal & 8 kolom biner bertipe `int`, 14 kolom numerik bertipe `float`/`int`).<br>- Simpan hasil akhir Data Engineer ke `processed_data/` berupa **31 kolom asli (belum di-scale & belum di-one-hot encode)**, yaitu `X_train.csv`, `X_test.csv`, `y_train.csv`, dan `y_test.csv` (atau `train.csv` dan `test.csv`). |
+
+#### B. Pembuatan Notebook EDA (`eda_data_engineer.ipynb` — Bab 3 Langkah 3)
+Data Engineer wajib membuat 1 file Jupyter Notebook (`eda_data_engineer.ipynb`) yang dapat dijalankan ulang dari awal (*reproducible*) dan memuat:
+1. **Distribusi Target (`curricular_units_2nd_sem_grade`)**: Histogram + *boxplot* yang menunjukkan pola bimodal (*zero-inflated* pada nilai `0.0` dan distribusi normal pada rentang `10.0 – 18.0`).
+2. **Tabel Statistik Deskriptif**: Nilai `mean`, `std`, `min`, `median`, dan `max` untuk seluruh fitur numerik dan target.
+3. **Heatmap Korelasi Numerik**: Matriks korelasi Pearson/Spearman antara 14 fitur numerik (khususnya performa Semester 1 dan nilai masuk) terhadap target `curricular_units_2nd_sem_grade`.
+4. **Boxplot Target per Kategori & Cek Kategori Timpang**: Visualisasi sebaran nilai target berdasarkan kategori utama (`course`, `scholarship_holder`, `tuition_fees_up_to_date`, `gender`, `daytime_evening_attendance`) serta tabel frekuensi kategori untuk mendeteksi kategori langka (`< 1%`).
+5. **Dokumentasi Isu *Feature Leakage* & 3–5 Temuan Utama**: Penjelasan tertulis mengapa atribut Semester 2 dikeluarkan dari fitur input, disertai 3–5 *insight* utama sebagai bahan laporan kelompok.
+
+#### C. Pembuatan Data Dictionary & Tabel Kontrak Fitur (`DATA_DICTIONARY.md` — Bab 2 & Bab 3 Langkah 1 & 8)
+Data Engineer wajib membuat dokumen `DATA_DICTIONARY.md` yang berisi:
+1. **Metadata Sumber Dataset**: Nama dataset (*Predict Students' Dropout and Academic Success*), sumber UCI Machine Learning Repository / Kaggle, DOI (`10.24432/C5MC89` / Realinho et al., 2022), lisensi (*CC BY 4.0*), serta jumlah baris (`4.424`) dan kolom awal (`37`).
+2. **Tabel Kontrak 31 Fitur Input**: Mencantumkan nama kolom (`snake_case`), kelompok tipe (`numeric`, `categorical`, `binary`), rentang nilai (`min`–`max`), dan arti atribut dalam bahasa Indonesia.
+3. **Kamus Pemetaan Kode Angka Kategori**: Menjelaskan arti kode ID pada 9 fitur kategori nominal (contoh pada `course`: `33` = *Biofuel Production Technologies*, `171` = *Animation and Multimedia Design*, `8014` = *Social Service (evening)*, `9003` = *Agronomy*, `9070` = *Communication Design*, `9085` = *Veterinary Nursing*, `9119` = *Informatics Engineering*, `9130` = *Equinculture*, `9147` = *Management*, `9238` = *Social Service*, `9254` = *Tourism*, `9500` = *Nursing*, `9556` = *Oral Hygiene*, `9670` = *Advertising and Marketing Management*, `9773` = *Journalism and Communication*, `9853` = *Basic Education*, `9991` = *Management (evening)*; serta kode `marital_status`, `application_mode`, `mothers_qualification`, `fathers_qualification`, `mothers_occupation`, `fathers_occupation`) agar **App Developer** dapat menampilkan teks nama jurusan/status yang ramah pengguna di *dropdown* `app.py`.
 
 ### Prioritas 3 — Pembuatan Aplikasi Streamlit (App Developer)
 1. Instal `streamlit` ke dalam `.venv` dan kunci versinya di `requirements.txt`.
