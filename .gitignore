@@ -1,0 +1,21 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor & OS specific settings
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Python cache & build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
