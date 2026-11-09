@@ -1,0 +1,655 @@
+{
+  "project": "Prediksi IPK Akhir Semester & Penjelasan Faktor SHAP (Proyek P08)",
+  "task_type": "regression",
+  "target_column": "curricular_units_2nd_sem_grade",
+  "target_scale": [
+    0.0,
+    20.0
+  ],
+  "gpa_scale": [
+    0.0,
+    4.0
+  ],
+  "random_state": 42,
+  "compared_models": [
+    "Decision Tree Regressor",
+    "Random Forest Regressor"
+  ],
+  "selected_model": "Random Forest Regressor (Tuned 5-Fold CV)",
+  "best_hyperparameters": {
+    "model__max_depth": 8,
+    "model__max_features": 0.5,
+    "model__min_samples_leaf": 5,
+    "model__n_estimators": 100
+  },
+  "decision_tree_hyperparameters": {
+    "model__ccp_alpha": 0.02,
+    "model__max_depth": 6,
+    "model__min_samples_leaf": 30,
+    "model__min_samples_split": 10
+  },
+  "metrics": {
+    "train_rmse": 2.006,
+    "test_rmse": 2.6207,
+    "train_mae": 1.0714,
+    "test_mae": 1.3803,
+    "train_r2": 0.8519,
+    "test_r2": 0.7463,
+    "test_rmse_ipk": 0.5241,
+    "test_mae_ipk": 0.2761
+  },
+  "comparison_table": [
+    {
+      "Model": "Decision Tree Regressor",
+      "Train_RMSE": 2.4159,
+      "Test_RMSE": 2.7127,
+      "Train_MAE": 1.2895,
+      "Test_MAE": 1.429,
+      "Train_R2": 0.7851,
+      "Test_R2": 0.7282,
+      "Test_RMSE_IPK": 0.5425,
+      "Test_MAE_IPK": 0.2858
+    },
+    {
+      "Model": "Random Forest Regressor",
+      "Train_RMSE": 2.006,
+      "Test_RMSE": 2.6207,
+      "Train_MAE": 1.0714,
+      "Test_MAE": 1.3803,
+      "Train_R2": 0.8519,
+      "Test_R2": 0.7463,
+      "Test_RMSE_IPK": 0.5241,
+      "Test_MAE_IPK": 0.2761
+    }
+  ],
+  "top_shap_features": [
+    {
+      "feature": "approval_rate_1st_sem",
+      "feature_label": "Rasio Kelulusan SKS Semester 1",
+      "mean_abs_shap_grade": 1.6367,
+      "mean_abs_shap_ipk": 0.3273
+    },
+    {
+      "feature": "curricular_units_1st_sem_approved",
+      "feature_label": "SKS Lulus (Sem 1)",
+      "mean_abs_shap_grade": 1.2206,
+      "mean_abs_shap_ipk": 0.2441
+    },
+    {
+      "feature": "curricular_units_1st_sem_grade",
+      "feature_label": "Nilai Rata-Rata Semester 1",
+      "mean_abs_shap_grade": 0.6157,
+      "mean_abs_shap_ipk": 0.1231
+    },
+    {
+      "feature": "curricular_units_1st_sem_evaluations",
+      "feature_label": "Jumlah Evaluasi Ujian (Sem 1)",
+      "mean_abs_shap_grade": 0.2822,
+      "mean_abs_shap_ipk": 0.0564
+    },
+    {
+      "feature": "tuition_fees_up_to_date",
+      "feature_label": "UKT / SPP Lancar",
+      "mean_abs_shap_grade": 0.0931,
+      "mean_abs_shap_ipk": 0.0186
+    },
+    {
+      "feature": "age_at_enrollment",
+      "feature_label": "Usia Saat Mendaftar",
+      "mean_abs_shap_grade": 0.0706,
+      "mean_abs_shap_ipk": 0.0141
+    },
+    {
+      "feature": "course",
+      "feature_label": "Program Studi (Kode Jurusan)",
+      "mean_abs_shap_grade": 0.0544,
+      "mean_abs_shap_ipk": 0.0109
+    },
+    {
+      "feature": "admission_grade",
+      "feature_label": "Nilai Ujian Masuk (Admission Grade)",
+      "mean_abs_shap_grade": 0.0534,
+      "mean_abs_shap_ipk": 0.0107
+    },
+    {
+      "feature": "application_mode",
+      "feature_label": "Jalur Pendaftaran",
+      "mean_abs_shap_grade": 0.0433,
+      "mean_abs_shap_ipk": 0.0087
+    },
+    {
+      "feature": "unemployment_rate",
+      "feature_label": "Tingkat Pengangguran Makro (%)",
+      "mean_abs_shap_grade": 0.0416,
+      "mean_abs_shap_ipk": 0.0083
+    }
+  ],
+  "library_versions": {
+    "numpy": "2.5.4",
+    "pandas": "3.1.1",
+    "scikit-learn": "1.9.1",
+    "joblib": "1.6.0",
+    "shap": "0.54.1"
+  },
+  "feature_names_in": [
+    "application_order",
+    "previous_qualification_grade",
+    "admission_grade",
+    "age_at_enrollment",
+    "curricular_units_1st_sem_credited",
+    "curricular_units_1st_sem_enrolled",
+    "curricular_units_1st_sem_evaluations",
+    "curricular_units_1st_sem_approved",
+    "curricular_units_1st_sem_grade",
+    "curricular_units_1st_sem_without_evaluations",
+    "unemployment_rate",
+    "inflation_rate",
+    "gdp",
+    "approval_rate_1st_sem",
+    "marital_status",
+    "application_mode",
+    "course",
+    "previous_qualification",
+    "nationality",
+    "mothers_qualification",
+    "fathers_qualification",
+    "mothers_occupation",
+    "fathers_occupation",
+    "daytime_evening_attendance",
+    "displaced",
+    "educational_special_needs",
+    "debtor",
+    "tuition_fees_up_to_date",
+    "gender",
+    "scholarship_holder",
+    "international"
+  ],
+  "numeric_cols": [
+    "application_order",
+    "previous_qualification_grade",
+    "admission_grade",
+    "age_at_enrollment",
+    "curricular_units_1st_sem_credited",
+    "curricular_units_1st_sem_enrolled",
+    "curricular_units_1st_sem_evaluations",
+    "curricular_units_1st_sem_approved",
+    "curricular_units_1st_sem_grade",
+    "curricular_units_1st_sem_without_evaluations",
+    "unemployment_rate",
+    "inflation_rate",
+    "gdp",
+    "approval_rate_1st_sem"
+  ],
+  "nominal_categorical_cols": [
+    "marital_status",
+    "application_mode",
+    "course",
+    "previous_qualification",
+    "nationality",
+    "mothers_qualification",
+    "fathers_qualification",
+    "mothers_occupation",
+    "fathers_occupation"
+  ],
+  "binary_cols": [
+    "daytime_evening_attendance",
+    "displaced",
+    "educational_special_needs",
+    "debtor",
+    "tuition_fees_up_to_date",
+    "gender",
+    "scholarship_holder",
+    "international"
+  ],
+  "default_feature_values": {
+    "application_order": 1.0,
+    "previous_qualification_grade": 133.1,
+    "admission_grade": 126.1,
+    "age_at_enrollment": 20.0,
+    "curricular_units_1st_sem_credited": 0.0,
+    "curricular_units_1st_sem_enrolled": 6.0,
+    "curricular_units_1st_sem_evaluations": 8.0,
+    "curricular_units_1st_sem_approved": 5.0,
+    "curricular_units_1st_sem_grade": 12.324,
+    "curricular_units_1st_sem_without_evaluations": 0.0,
+    "unemployment_rate": 11.1,
+    "inflation_rate": 1.4,
+    "gdp": 0.32,
+    "approval_rate_1st_sem": 0.833,
+    "marital_status": 1,
+    "application_mode": 1,
+    "course": 9500,
+    "previous_qualification": 1,
+    "nationality": 1,
+    "mothers_qualification": 1,
+    "fathers_qualification": 37,
+    "mothers_occupation": 9,
+    "fathers_occupation": 9,
+    "daytime_evening_attendance": 1,
+    "displaced": 1,
+    "educational_special_needs": 0,
+    "debtor": 0,
+    "tuition_fees_up_to_date": 1,
+    "gender": 0,
+    "scholarship_holder": 0,
+    "international": 0
+  },
+  "feature_schema": {
+    "application_order": {
+      "type": "numeric",
+      "min": 1.0,
+      "max": 9.0,
+      "median": 1.0
+    },
+    "previous_qualification_grade": {
+      "type": "numeric",
+      "min": 100.0,
+      "max": 170.0,
+      "median": 133.1
+    },
+    "admission_grade": {
+      "type": "numeric",
+      "min": 98.638,
+      "max": 167.024,
+      "median": 126.1
+    },
+    "age_at_enrollment": {
+      "type": "numeric",
+      "min": 18.0,
+      "max": 50.0,
+      "median": 20.0
+    },
+    "curricular_units_1st_sem_credited": {
+      "type": "numeric",
+      "min": 0.0,
+      "max": 20.0,
+      "median": 0.0
+    },
+    "curricular_units_1st_sem_enrolled": {
+      "type": "numeric",
+      "min": 0.0,
+      "max": 26.0,
+      "median": 6.0
+    },
+    "curricular_units_1st_sem_evaluations": {
+      "type": "numeric",
+      "min": 0.0,
+      "max": 45.0,
+      "median": 8.0
+    },
+    "curricular_units_1st_sem_approved": {
+      "type": "numeric",
+      "min": 0.0,
+      "max": 26.0,
+      "median": 5.0
+    },
+    "curricular_units_1st_sem_grade": {
+      "type": "numeric",
+      "min": 0.0,
+      "max": 18.875,
+      "median": 12.324
+    },
+    "curricular_units_1st_sem_without_evaluations": {
+      "type": "numeric",
+      "min": 0.0,
+      "max": 12.0,
+      "median": 0.0
+    },
+    "unemployment_rate": {
+      "type": "numeric",
+      "min": 7.6,
+      "max": 16.2,
+      "median": 11.1
+    },
+    "inflation_rate": {
+      "type": "numeric",
+      "min": -0.8,
+      "max": 3.7,
+      "median": 1.4
+    },
+    "gdp": {
+      "type": "numeric",
+      "min": -4.06,
+      "max": 3.51,
+      "median": 0.32
+    },
+    "approval_rate_1st_sem": {
+      "type": "numeric",
+      "min": 0.0,
+      "max": 1.0,
+      "median": 0.833
+    },
+    "marital_status": {
+      "type": "categorical",
+      "categories": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "default": 1
+    },
+    "application_mode": {
+      "type": "categorical",
+      "categories": [
+        1,
+        2,
+        5,
+        7,
+        10,
+        15,
+        16,
+        17,
+        18,
+        26,
+        27,
+        39,
+        42,
+        43,
+        44,
+        51,
+        53,
+        57
+      ],
+      "default": 1
+    },
+    "course": {
+      "type": "categorical",
+      "categories": [
+        33,
+        171,
+        8014,
+        9003,
+        9070,
+        9085,
+        9119,
+        9130,
+        9147,
+        9238,
+        9254,
+        9500,
+        9556,
+        9670,
+        9773,
+        9853,
+        9991
+      ],
+      "default": 9500
+    },
+    "previous_qualification": {
+      "type": "categorical",
+      "categories": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        9,
+        10,
+        12,
+        14,
+        15,
+        19,
+        38,
+        39,
+        40,
+        42,
+        43
+      ],
+      "default": 1
+    },
+    "nationality": {
+      "type": "categorical",
+      "categories": [
+        1,
+        2,
+        6,
+        11,
+        13,
+        17,
+        21,
+        22,
+        24,
+        25,
+        26,
+        32,
+        41,
+        100,
+        101,
+        103,
+        105,
+        108,
+        109
+      ],
+      "default": 1
+    },
+    "mothers_qualification": {
+      "type": "categorical",
+      "categories": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        9,
+        10,
+        11,
+        12,
+        14,
+        19,
+        22,
+        26,
+        27,
+        29,
+        30,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43
+      ],
+      "default": 1
+    },
+    "fathers_qualification": {
+      "type": "categorical",
+      "categories": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        19,
+        20,
+        22,
+        25,
+        26,
+        27,
+        29,
+        30,
+        31,
+        33,
+        34,
+        35,
+        36,
+        37,
+        38,
+        39,
+        40,
+        41,
+        42,
+        43,
+        44
+      ],
+      "default": 37
+    },
+    "mothers_occupation": {
+      "type": "categorical",
+      "categories": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        90,
+        99,
+        122,
+        123,
+        125,
+        131,
+        132,
+        134,
+        141,
+        143,
+        144,
+        151,
+        152,
+        153,
+        171,
+        173,
+        175,
+        191,
+        192,
+        193,
+        194
+      ],
+      "default": 9
+    },
+    "fathers_occupation": {
+      "type": "categorical",
+      "categories": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        90,
+        99,
+        101,
+        102,
+        103,
+        112,
+        114,
+        121,
+        122,
+        123,
+        124,
+        131,
+        132,
+        134,
+        135,
+        141,
+        143,
+        144,
+        151,
+        152,
+        153,
+        154,
+        163,
+        171,
+        172,
+        174,
+        175,
+        181,
+        182,
+        183,
+        192,
+        193,
+        194,
+        195
+      ],
+      "default": 9
+    },
+    "daytime_evening_attendance": {
+      "type": "binary",
+      "categories": [
+        0,
+        1
+      ],
+      "default": 1
+    },
+    "displaced": {
+      "type": "binary",
+      "categories": [
+        0,
+        1
+      ],
+      "default": 1
+    },
+    "educational_special_needs": {
+      "type": "binary",
+      "categories": [
+        0,
+        1
+      ],
+      "default": 0
+    },
+    "debtor": {
+      "type": "binary",
+      "categories": [
+        0,
+        1
+      ],
+      "default": 0
+    },
+    "tuition_fees_up_to_date": {
+      "type": "binary",
+      "categories": [
+        0,
+        1
+      ],
+      "default": 1
+    },
+    "gender": {
+      "type": "binary",
+      "categories": [
+        0,
+        1
+      ],
+      "default": 0
+    },
+    "scholarship_holder": {
+      "type": "binary",
+      "categories": [
+        0,
+        1
+      ],
+      "default": 0
+    },
+    "international": {
+      "type": "binary",
+      "categories": [
+        0,
+        1
+      ],
+      "default": 0
+    }
+  }
+}

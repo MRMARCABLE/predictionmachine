@@ -69,7 +69,7 @@ def load_artifacts(
     if not os.path.exists(model_path):
         raise FileNotFoundError(
             f"File model tidak ditemukan di '{model_path}'. "
-            "Jalankan seluruh sel di notebook `ml_engineer_regression.ipynb` terlebih dahulu."
+            "Jalankan skrip `python train_and_compare.py` terlebih dahulu."
         )
 
     pipeline = joblib.load(model_path)

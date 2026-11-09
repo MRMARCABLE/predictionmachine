@@ -1,16 +1,20 @@
 """
 ================================================================================
-PIPELINE DATA PREPROCESSING — PREDICT STUDENTS' DROPOUT VS GRADUATE
+PIPELINE DATA PREPROCESSING — PREDIKSI PERFORMA AKADEMIK MAHASISWA (P08)
+PENDEKATAN REGRESI NILAI AKHIR (CURRICULAR_UNITS_2ND_SEM_GRADE)
 ================================================================================
-File ini dibagi menjadi beberapa bagian fungsi berdasarkan tugasnya agar mudah
-di-tracking, dibaca, dan dipelajari:
+Modul ini disusun oleh Data Engineer untuk memenuhi Bab 2 & Bab 3 Panduan
+Pengerjaan Proyek P08. Seluruh alur dirancang bebas kebocoran target (target leakage),
+menyerahkan data bersih dalam format 31 fitur asli tanpa normalisasi / One-Hot Encoding
+(transformasi model diserahkan sepenuhnya ke Pipeline ML Engineer).
 
-  1. load_and_inspect()      -> Membaca CSV mentah & inspeksi awal kondisi data
-  2. clean_and_filter_data() -> Standarisasi kolom, filter Dropout vs Graduate, & koreksi anomali
-  3. engineer_features()     -> Membuat 6 fitur baru (rasio kelulusan & selisih nilai)
-  4. split_train_test()      -> Membagi data Train (80%) & Test (20%) secara stratified
-  5. cap_outliers()          -> Membatasi nilai ekstrem (Winsorizing) dari batas data Train
-  6. encode_scale_and_save() -> One-Hot Encoding (kategori), StandardScaler (numerik), & simpan CSV
+Tahapan Fungsi:
+  1. load_and_inspect()      -> Membaca CSV mentah & inspeksi target regresi
+  2. clean_and_filter_data() -> Snake_case, koreksi anomali, & eliminasi leakage Sem 2
+  3. engineer_features()     -> Rekayasa fitur aman (approval_rate_1st_sem)
+  4. split_train_test()      -> Split 80% Train / 20% Test (random_state=42)
+  5. cap_outliers()          -> Winsorizing persentil 1% & 99% dari X_train
+  6. save_processed_data()   -> Validasi tipe data & simpan berkas bersih ke processed_data/
 ================================================================================
 """
 
@@ -18,68 +22,106 @@ import os
 import re
 from typing import Tuple
 
-import joblib
 import numpy as np
 import pandas as pd
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
 from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+
+RANDOM_STATE = 42
+
+# Definisi Kontrak 31 Fitur Input (Sesuai DATA_DICTIONARY.md & PROJECT_NOTES_P08.md)
+BINARY_COLS = [
+    "daytime_evening_attendance",
+    "displaced",
+    "educational_special_needs",
+    "debtor",
+    "tuition_fees_up_to_date",
+    "gender",
+    "scholarship_holder",
+    "international",
+]
+
+NOMINAL_CATEGORICAL_COLS = [
+    "marital_status",
+    "application_mode",
+    "course",
+    "previous_qualification",
+    "nationality",
+    "mothers_qualification",
+    "fathers_qualification",
+    "mothers_occupation",
+    "fathers_occupation",
+]
+
+NUMERIC_COLS = [
+    "application_order",
+    "previous_qualification_grade",
+    "admission_grade",
+    "age_at_enrollment",
+    "curricular_units_1st_sem_credited",
+    "curricular_units_1st_sem_enrolled",
+    "curricular_units_1st_sem_evaluations",
+    "curricular_units_1st_sem_approved",
+    "curricular_units_1st_sem_grade",
+    "curricular_units_1st_sem_without_evaluations",
+    "unemployment_rate",
+    "inflation_rate",
+    "gdp",
+    "approval_rate_1st_sem",
+]
+
+TARGET_COL = "curricular_units_2nd_sem_grade"
+
+LEAKAGE_COLS_TO_DROP = [
+    "target",
+    "curricular_units_2nd_sem_credited",
+    "curricular_units_2nd_sem_enrolled",
+    "curricular_units_2nd_sem_evaluations",
+    "curricular_units_2nd_sem_approved",
+    "curricular_units_2nd_sem_without_evaluations",
+]
 
 
 # ==============================================================================
 # BAGIAN A: LOAD DATA & INITIAL INSPECTION (INSPEKSI AWAL DATA)
-# ==============================================================================
-# CATATAN (NOTES):
-# - Tujuan bagian ini adalah mengecek kondisi awal data mentah sebelum diubah.
-# - Hal yang dicek:
-#   * Ukuran baris (jumlah mahasiswa) dan kolom (jumlah atribut).
-#   * Apakah ada nilai kosong (Missing Values / NaN)?
-#   * Apakah ada baris data yang kembar/duplikat?
-#   * Bagaimana distribusi awal pada kolom 'target'?
 # ==============================================================================
 def load_and_inspect(input_path: str = "students_dropout_academic_success.csv") -> pd.DataFrame:
     print("=" * 70)
     print("[BAGIAN A] DATA LOADING & INITIAL INSPECTION")
     print("=" * 70)
 
+    if not os.path.exists(input_path):
+        raise FileNotFoundError(f"Berkas dataset tidak ditemukan di: {input_path}")
+
     df_raw = pd.read_csv(input_path)
 
-    print(f"Ukuran awal dataset : {df_raw.shape[0]} baris x {df_raw.shape[1]} kolom")
-    print(f"Total missing values: {df_raw.isnull().sum().sum()}")
-    print(f"Total baris duplikat: {df_raw.duplicated().sum()}")
+    print(f"Ukuran awal dataset  : {df_raw.shape[0]} baris x {df_raw.shape[1]} kolom")
+    print(f"Total missing values : {df_raw.isnull().sum().sum()}")
+    print(f"Total baris duplikat : {df_raw.duplicated().sum()}")
 
-    print("\nDistribusi Target Awal (3 Kelas):")
-    print(df_raw["target"].value_counts())
+    # Evaluasi awal target regresi (curricular units 2nd sem (grade))
+    # Mencari nama kolom target di dataset mentah sebelum pembersihan nama
+    raw_target_col = [c for c in df_raw.columns if "2nd sem" in c.lower() and "grade" in c.lower()][0]
+    target_series = df_raw[raw_target_col]
+
+    zero_count = (target_series == 0.0).sum()
+    print(f"\nStatistik Target Regresi Mentah ('{raw_target_col}'):")
+    print(f"  - Mean   : {target_series.mean():.2f}")
+    print(f"  - Std    : {target_series.std():.2f}")
+    print(f"  - Min    : {target_series.min():.2f}")
+    print(f"  - Median : {target_series.median():.2f}")
+    print(f"  - Max    : {target_series.max():.2f}")
+    print(f"  - Nilai 0.0 (Zero-Inflated) : {zero_count} mahasiswa ({zero_count/len(df_raw)*100:.2f}%)")
 
     return df_raw
 
 
 # ==============================================================================
-# BAGIAN B: DATA CLEANING & TARGET FILTERING (PEMBERSIHAN DATA)
-# ==============================================================================
-# CATATAN (NOTES):
-# - Apa saja yang dibersihkan di bagian ini?
-#   1. Nama Kolom: Di data asli banyak spasi, tanda kurung, kutip (Mother's),
-#      dan typo ('Nacionality'). Semua diubah ke snake_case (huruf kecil + underscore)
-#      supaya konsisten dan mudah dipanggil di kode Python.
-#   2. Hapus Duplikat: Memastikan tidak ada baris mahasiswa yang tercatat ganda.
-#   3. Filter Target (Dropout vs Graduate):
-#      - Di data asli ada 3 status: 'Graduate', 'Dropout', dan 'Enrolled'.
-#      - Karena fokus kita memprediksi Dropout vs Graduate, baris 'Enrolled'
-#        (masih kuliah) dibuang karena hasil akhirnya belum diketahui.
-#      - Label teks diubah menjadi angka biner:
-#        * Graduate -> 0
-#        * Dropout  -> 1
-#   4. Perbaikan Anomali Data:
-#      - Kolom 'application_order' seharusnya bernilai 1 (pilihan pertama) s/d 9.
-#      - Ada baris yang bernilai 0, sehingga dikoreksi menjadi 1.
+# BAGIAN B: DATA CLEANING & ELIMINASI TARGET LEAKAGE
 # ==============================================================================
 def clean_column_name(col: str) -> str:
     """Mengubah nama kolom menjadi snake_case yang bersih dan memperbaiki typo."""
     col = col.strip().lower()
-    col = col.replace("nacionality", "nationality")  # Fix typo bawaan dataset
+    col = col.replace("nacionality", "nationality")  # Fix typo bawaan dataset UCI
     col = col.replace("'", "")
     col = re.sub(r"[^a-z0-9]+", "_", col)
     return col.strip("_")
@@ -87,158 +129,99 @@ def clean_column_name(col: str) -> str:
 
 def clean_and_filter_data(df_raw: pd.DataFrame) -> pd.DataFrame:
     print("\n" + "=" * 70)
-    print("[BAGIAN B] DATA CLEANING & FILTERING (DROPOUT VS GRADUATE)")
+    print("[BAGIAN B] DATA CLEANING & ELIMINASI TARGET LEAKAGE")
     print("=" * 70)
 
     df = df_raw.copy()
 
     # 1. Standarisasi nama kolom ke snake_case
     df.columns = [clean_column_name(c) for c in df.columns]
-    print("Contoh nama kolom setelah dibersihkan:", list(df.columns[:6]))
 
-    # 2. Hapus baris duplikat (jika ada)
+    # 2. Hapus duplikat baris (jika ada)
     df = df.drop_duplicates().reset_index(drop=True)
 
-    # 3. Filter khusus Binary Classification: Dropout (1) vs Graduate (0)
-    df = df[df["target"].isin(["Dropout", "Graduate"])].copy().reset_index(drop=True)
-    df["target"] = df["target"].map({"Graduate": 0, "Dropout": 1}).astype(int)
-
-    grad_count = (df["target"] == 0).sum()
-    drop_count = (df["target"] == 1).sum()
-    print(f"Ukuran setelah filter (Dropout vs Graduate): {df.shape[0]} baris")
-    print(
-        f"Distribusi Target Baru -> Graduate (0): {grad_count} ({grad_count/len(df)*100:.1f}%), "
-        f"Dropout (1): {drop_count} ({drop_count/len(df)*100:.1f}%)"
-    )
-
-    # 4. Perbaiki anomali nilai pada application_order (0 -> 1)
+    # 3. Koreksi anomali application_order (nilai 0 diubah menjadi pilihan ke-1)
     anomaly_count = (df["application_order"] == 0).sum()
     if anomaly_count > 0:
         df["application_order"] = df["application_order"].replace(0, 1)
-        print(f"Memperbaiki {anomaly_count} baris anomali pada 'application_order' (0 -> 1)")
+        print(f"Koreksi anomali: {anomaly_count} baris pada 'application_order' diubah dari 0 menjadi 1.")
+
+    # 4. Eliminasi Kolom Target Leakage
+    # Target utama adalah curricular_units_2nd_sem_grade. Kolom semester 2 lainnya dan kolom 'target'
+    # kelulusan akhir WAJIB dibuang agar model bisa dipakai memprediksi di awal semester 2.
+    existing_leakage = [col for col in LEAKAGE_COLS_TO_DROP if col in df.columns]
+    df = df.drop(columns=existing_leakage)
+    print(f"Berhasil mengeliminasi {len(existing_leakage)} kolom penyebab target leakage:")
+    for col in existing_leakage:
+        print(f"  - {col}")
+
+    # Catatan: Kita TIDAK membuang baris 'Enrolled', seluruh 4.424 mahasiswa dipertahankan
+    # karena target kita adalah performa nilai akademik seluruh mahasiswa yang berkuliah.
+    print(f"Jumlah sampel dipertahankan: {df.shape[0]} baris (seluruh populasi mahasiswa).")
 
     return df
 
 
 # ==============================================================================
-# BAGIAN C: FEATURE ENGINEERING (MEMBUAT FITUR BARU)
+# BAGIAN C: FEATURE ENGINEERING (REKAYASA FITUR BEBAS LEAKAGE)
 # ==============================================================================
-# CATATAN (NOTES):
-# - Mengapa perlu membuat fitur baru?
-#   Jika model hanya tahu "lulus 4 matkul", model tidak tahu apakah mahasiswa
-#   tersebut mengambil 4 matkul (lulus 100%) atau 10 matkul (lulus 40%).
-# - Fitur turunan yang ditambahkan:
-#   1. approval_rate_1st_sem : Rasio matkul lulus dibanding yang diambil di Sem 1.
-#   2. approval_rate_2nd_sem : Rasio matkul lulus dibanding yang diambil di Sem 2.
-#   3. grade_diff_sem2_sem1  : Selisih nilai rata-rata Sem 2 dikurangi Sem 1.
-#   4. approval_rate_diff    : Selisih rasio kelulusan Sem 2 dikurangi Sem 1.
-#   5. total_enrolled_units  : Total matkul yang diambil selama tahun pertama.
-#   6. total_approved_units  : Total matkul yang lulus selama tahun pertama.
-# ==============================================================================
-def engineer_features(df_clean: pd.DataFrame, output_dir: str = "processed_data") -> pd.DataFrame:
+def engineer_features(df_clean: pd.DataFrame) -> pd.DataFrame:
     print("\n" + "=" * 70)
-    print("[BAGIAN C] FEATURE ENGINEERING (MEMBUAT FITUR BARU)")
+    print("[BAGIAN C] FEATURE ENGINEERING (BEBAS LEAKAGE)")
     print("=" * 70)
 
     df = df_clean.copy()
-    os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Rasio kelulusan mata kuliah per semester (Approved / Enrolled)
-    # Jika enrolled == 0, diisi 0.0 agar tidak terjadi pembagian dengan nol
+    # 1. Rasio kelulusan Semester 1: approval_rate_1st_sem = approved / enrolled
+    # Jika enrolled == 0, diisi 0.0 agar aman dari pembagian nol.
     df["approval_rate_1st_sem"] = np.where(
         df["curricular_units_1st_sem_enrolled"] > 0,
         df["curricular_units_1st_sem_approved"] / df["curricular_units_1st_sem_enrolled"],
         0.0,
     )
-    df["approval_rate_2nd_sem"] = np.where(
-        df["curricular_units_2nd_sem_enrolled"] > 0,
-        df["curricular_units_2nd_sem_approved"] / df["curricular_units_2nd_sem_enrolled"],
-        0.0,
-    )
+    print("Fitur rekayasa ditambahkan: 'approval_rate_1st_sem' (rasio lulus SKS Sem 1).")
 
-    # 2. Perubahan performa dari semester 1 ke semester 2
-    df["grade_diff_sem2_sem1"] = (
-        df["curricular_units_2nd_sem_grade"] - df["curricular_units_1st_sem_grade"]
-    )
-    df["approval_rate_diff"] = df["approval_rate_2nd_sem"] - df["approval_rate_1st_sem"]
-
-    # 3. Total mata kuliah yang diambil dan lulus selama tahun pertama
-    df["total_enrolled_units"] = (
-        df["curricular_units_1st_sem_enrolled"] + df["curricular_units_2nd_sem_enrolled"]
-    )
-    df["total_approved_units"] = (
-        df["curricular_units_1st_sem_approved"] + df["curricular_units_2nd_sem_approved"]
-    )
-
-    engineered_cols = [
-        "approval_rate_1st_sem",
-        "approval_rate_2nd_sem",
-        "grade_diff_sem2_sem1",
-        "approval_rate_diff",
-        "total_enrolled_units",
-        "total_approved_units",
-    ]
-    print(f"Berhasil menambahkan {len(engineered_cols)} fitur baru:")
-    for col in engineered_cols:
-        print(f"  + {col}")
-
-    # Simpan dataset bersih (sebelum scaling/one-hot) untuk kebutuhan EDA/visualisasi
-    clean_unscaled_path = os.path.join(output_dir, "data_cleaned_unscaled.csv")
-    df.to_csv(clean_unscaled_path, index=False)
-    print(f"\n[INFO] Dataset bersih (unscaled) disimpan ke: {clean_unscaled_path}")
+    # Catatan: Fitur rekayasa Semester 2 lama (approval_rate_2nd_sem, grade_diff_sem2_sem1,
+    # approval_rate_diff, total_enrolled_units, total_approved_units) DITIADAKAN karena
+    # membocorkan nilai Semester 2 secara langsung (100% target leakage).
 
     return df
 
 
 # ==============================================================================
-# BAGIAN D: TRAIN-TEST SPLIT (MEMBAGI DATA LATIH & DATA UJI)
-# ==============================================================================
-# CATATAN PENTING (NOTES):
-# - Train-Test Split wajib dilakukan SEBELUM Outlier Capping, Imputasi, dan Scaling
-#   agar TIDAK terjadi DATA LEAKAGE (kebocoran informasi dari data uji ke data latih).
-# - Semua batas persentil outlier, nilai median, dan rata-rata scaling nantinya
-#   dihitung dari X_train saja, lalu diterapkan ke X_test.
-# - Parameter `stratify=y` menjaga proporsi kelas Dropout (39.1%) dan Graduate (60.9%)
-#   tetap seimbang di data Train maupun Test.
+# BAGIAN D: TRAIN-TEST SPLIT (MENCEGAH DATA LEAKAGE)
 # ==============================================================================
 def split_train_test(
-    df: pd.DataFrame, test_size: float = 0.20, random_state: int = 42
+    df: pd.DataFrame, test_size: float = 0.20, random_state: int = RANDOM_STATE
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
     print("\n" + "=" * 70)
-    print("[BAGIAN D] TRAIN-TEST SPLIT (MENCEGAH DATA LEAKAGE)")
+    print("[BAGIAN D] TRAIN-TEST SPLIT (80% TRAIN / 20% TEST)")
     print("=" * 70)
 
-    X = df.drop(columns=["target"])
-    y = df["target"]
+    y = df[TARGET_COL]
+    X = df.drop(columns=[TARGET_COL])
 
+    # Menggunakan split tanpa stratify karena y adalah variabel kontinu regresi
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
+        X, y, test_size=test_size, random_state=random_state
     )
 
     print(f"Ukuran Data Latih (Train): X_train = {X_train.shape}, y_train = {y_train.shape}")
     print(f"Ukuran Data Uji   (Test) : X_test  = {X_test.shape},  y_test  = {y_test.shape}")
-    print(f"Proporsi Dropout di Train: {y_train.mean()*100:.2f}%")
-    print(f"Proporsi Dropout di Test : {y_test.mean()*100:.2f}%")
+    print(f"Target y_train mean: {y_train.mean():.2f}, std: {y_train.std():.2f}")
+    print(f"Target y_test  mean: {y_test.mean():.2f}, std: {y_test.std():.2f}")
 
     return X_train, X_test, y_train, y_test
 
 
 # ==============================================================================
-# BAGIAN E: PENANGANAN OUTLIER (WINSORIZING / CAPPING)
-# ==============================================================================
-# CATATAN (NOTES):
-# - Outlier adalah nilai yang terlalu ekstrem dibanding mayoritas data
-#   (contoh: umur mahasiswa saat mendaftar 70 tahun).
-# - Alih-alih menghapus barisnya, kita gunakan Capping (Winsorizing) pada
-#   persentil ke-1 (1%) dan ke-99 (99%) agar efek ekstremnya teredam tanpa
-#   kehilangan sampel data.
-# - Batas bawah (1%) dan batas atas (99%) dihitung HANYA dari X_train!
+# BAGIAN E: PENANGANAN OUTLIER (WINSORIZING / CAPPING PADA X_TRAIN)
 # ==============================================================================
 def cap_outliers(
     X_train: pd.DataFrame, X_test: pd.DataFrame
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     print("\n" + "=" * 70)
-    print("[BAGIAN E] PENANGANAN OUTLIER (CAPPING PADA DATA TRAIN)")
+    print("[BAGIAN E] PENANGANAN OUTLIER (CAPPING HANYA DARI X_TRAIN)")
     print("=" * 70)
 
     outlier_cols = [
@@ -251,154 +234,92 @@ def cap_outliers(
     X_test_capped = X_test.copy()
 
     for col in outlier_cols:
-        lower_bound = X_train_capped[col].quantile(0.01)
-        upper_bound = X_train_capped[col].quantile(0.99)
+        lower_bound = float(X_train_capped[col].quantile(0.01))
+        upper_bound = float(X_train_capped[col].quantile(0.99))
 
         X_train_capped[col] = X_train_capped[col].clip(lower=lower_bound, upper=upper_bound)
         X_test_capped[col] = X_test_capped[col].clip(lower=lower_bound, upper=upper_bound)
 
-        print(
-            f"- Kolom '{col}' dibatasi pada rentang [{lower_bound:.2f} s/d {upper_bound:.2f}]"
-        )
+        print(f"- Kolom '{col}': dibatasi pada rentang [{lower_bound:.2f} s/d {upper_bound:.2f}]")
 
     return X_train_capped, X_test_capped
 
 
 # ==============================================================================
-# BAGIAN F: ENCODING KATEGORI, FEATURE SCALING & EXPORT DATA
+# BAGIAN F: VALIDASI TIPE DATA & EKSPOR DATA BERSIH (TANPA SCALING / OHE)
 # ==============================================================================
-# CATATAN PENTING (NOTES):
-# Walaupun semua kolom di CSV terlihat berisi angka, sifat aslinya berbeda-beda
-# sehingga dibagi menjadi 3 kelompok perlakuan:
-#
-# 1. KOLOM BINER (8 Kolom):
-#    - Contoh: gender, debtor, scholarship_holder, tuition_fees_up_to_date.
-#    - Nilainya sudah 0 atau 1, tidak perlu diubah lagi.
-#
-# 2. KOLOM KATEGORI NOMINAL (9 Kolom):
-#    - Contoh: course (kode jurusan 33 s/d 9991), marital_status, application_mode,
-#      nationality, mothers_occupation, fathers_occupation.
-#    - Angka di sini hanyalah KODE ID kategori, bukan urutan besaran!
-#    - Diubah menjadi kolom biner (0/1) dengan `OneHotEncoder(min_frequency=0.01)`
-#      agar kategori langka (< 1% data) digabung otomatis ke kolom 'infrequent'.
-#
-# 3. KOLOM NUMERIK & ORDINAL (25 Kolom):
-#    - Contoh: admission_grade, gdp, jumlah SKS, umur, dan 6 fitur baru.
-#    - Disamakan skalanya menggunakan `StandardScaler` (rata-rata = 0, std = 1).
-# ==============================================================================
-def encode_scale_and_save(
+def save_processed_data(
     X_train: pd.DataFrame,
     X_test: pd.DataFrame,
     y_train: pd.Series,
     y_test: pd.Series,
+    df_clean: pd.DataFrame,
     output_dir: str = "processed_data",
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> None:
     print("\n" + "=" * 70)
-    print("[BAGIAN F] ENCODING KATEGORI, FEATURE SCALING & SIMPAN DATA")
+    print("[BAGIAN F] VALIDASI KONTRAK FITUR & PENYIMPANAN DATA BERSIH")
     print("=" * 70)
 
     os.makedirs(output_dir, exist_ok=True)
 
-    # 1. Daftar kolom Biner (0 atau 1)
-    binary_cols = [
-        "daytime_evening_attendance",
-        "displaced",
-        "educational_special_needs",
-        "debtor",
-        "tuition_fees_up_to_date",
-        "gender",
-        "scholarship_holder",
-        "international",
-    ]
+    # 1. Pastikan urutan 31 kolom persis sesuai kontrak
+    contract_cols = NUMERIC_COLS + NOMINAL_CATEGORICAL_COLS + BINARY_COLS
+    assert len(contract_cols) == 31, f"Jumlah kolom kontrak harus 31, didapat {len(contract_cols)}"
 
-    # 2. Daftar kolom Kategori Nominal (Kode ID angka -> One-Hot Encoding)
-    nominal_categorical_cols = [
-        "marital_status",
-        "application_mode",
-        "course",
-        "previous_qualification",
-        "nationality",
-        "mothers_qualification",
-        "fathers_qualification",
-        "mothers_occupation",
-        "fathers_occupation",
-    ]
+    X_train_final = X_train[contract_cols].copy()
+    X_test_final = X_test[contract_cols].copy()
 
-    # 3. Daftar kolom Numerik & Ordinal (Sisanya -> StandardScaler)
-    numeric_cols = [
-        col
-        for col in X_train.columns
-        if col not in binary_cols and col not in nominal_categorical_cols
-    ]
+    # 2. Pastikan tipe data konsisten
+    for col in BINARY_COLS + NOMINAL_CATEGORICAL_COLS:
+        X_train_final[col] = X_train_final[col].astype(int)
+        X_test_final[col] = X_test_final[col].astype(int)
 
-    print(f"- Jumlah fitur Numerik/Ordinal : {len(numeric_cols)} kolom -> StandardScaler")
-    print(f"- Jumlah fitur Kategori Nominal: {len(nominal_categorical_cols)} kolom  -> OneHotEncoder")
-    print(f"- Jumlah fitur Biner (0/1)     : {len(binary_cols)} kolom  -> Passthrough (Tetap 0/1)")
+    for col in NUMERIC_COLS:
+        if col in ["application_order", "age_at_enrollment", "curricular_units_1st_sem_credited",
+                    "curricular_units_1st_sem_enrolled", "curricular_units_1st_sem_evaluations",
+                    "curricular_units_1st_sem_approved", "curricular_units_1st_sem_without_evaluations"]:
+            X_train_final[col] = X_train_final[col].astype(int)
+            X_test_final[col] = X_test_final[col].astype(int)
+        else:
+            X_train_final[col] = X_train_final[col].astype(float)
+            X_test_final[col] = X_test_final[col].astype(float)
 
-    numeric_pipeline = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="median")),
-            ("scaler", StandardScaler()),
-        ]
-    )
+    # 3. Hapus preprocessor.joblib lama agar tidak menimbulkan kebingungan arsitektur
+    old_preprocessor = os.path.join(output_dir, "preprocessor.joblib")
+    if os.path.exists(old_preprocessor):
+        os.remove(old_preprocessor)
+        print("Menghapus 'preprocessor.joblib' usang dari tahap Data Engineer.")
 
-    categorical_pipeline = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-            (
-                "onehot",
-                OneHotEncoder(
-                    handle_unknown="ignore",
-                    min_frequency=0.01,
-                    sparse_output=False,
-                ),
-            ),
-        ]
-    )
+    # 4. Simpan berkas bersih ke processed_data/
+    # Simpan dataset lengkap unscaled (31 fitur + target = 32 kolom) untuk EDA
+    clean_unscaled_path = os.path.join(output_dir, "data_cleaned_unscaled.csv")
+    df_clean.to_csv(clean_unscaled_path, index=False)
 
-    binary_pipeline = Pipeline(
-        steps=[
-            ("imputer", SimpleImputer(strategy="most_frequent")),
-        ]
-    )
+    # Simpan split Train dan Test
+    X_train_path = os.path.join(output_dir, "X_train.csv")
+    X_test_path = os.path.join(output_dir, "X_test.csv")
+    y_train_path = os.path.join(output_dir, "y_train.csv")
+    y_test_path = os.path.join(output_dir, "y_test.csv")
 
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", numeric_pipeline, numeric_cols),
-            ("cat", categorical_pipeline, nominal_categorical_cols),
-            ("bin", binary_pipeline, binary_cols),
-        ],
-        verbose_feature_names_out=False,
-    )
+    X_train_final.to_csv(X_train_path, index=False)
+    X_test_final.to_csv(X_test_path, index=False)
+    y_train.to_frame(name=TARGET_COL).to_csv(y_train_path, index=False)
+    y_test.to_frame(name=TARGET_COL).to_csv(y_test_path, index=False)
 
-    # Fit HANYA pada X_train, lalu transform X_train dan X_test
-    X_train_processed = preprocessor.fit_transform(X_train)
-    X_test_processed = preprocessor.transform(X_test)
+    # Juga sediakan train.csv dan test.csv gabungan (fitur + target) sesuai panduan Bab 2
+    train_combined = pd.concat([X_train_final, y_train.to_frame(name=TARGET_COL)], axis=1)
+    test_combined = pd.concat([X_test_final, y_test.to_frame(name=TARGET_COL)], axis=1)
+    train_combined.to_csv(os.path.join(output_dir, "train.csv"), index=False)
+    test_combined.to_csv(os.path.join(output_dir, "test.csv"), index=False)
 
-    feature_names = preprocessor.get_feature_names_out()
-    X_train_df = pd.DataFrame(X_train_processed, columns=feature_names)
-    X_test_df = pd.DataFrame(X_test_processed, columns=feature_names)
-
-    print(f"\nDimensi akhir setelah One-Hot Encoding & Scaling:")
-    print(f"  * X_train_df: {X_train_df.shape[0]} baris x {X_train_df.shape[1]} kolom")
-    print(f"  * X_test_df : {X_test_df.shape[0]} baris x {X_test_df.shape[1]} kolom")
-
-    # Simpan semua hasil akhir ke folder processed_data/
-    X_train_df.to_csv(os.path.join(output_dir, "X_train.csv"), index=False)
-    X_test_df.to_csv(os.path.join(output_dir, "X_test.csv"), index=False)
-    y_train.to_csv(os.path.join(output_dir, "y_train.csv"), index=False)
-    y_test.to_csv(os.path.join(output_dir, "y_test.csv"), index=False)
-    joblib.dump(preprocessor, os.path.join(output_dir, "preprocessor.joblib"))
-
-    print("\n" + "=" * 70)
-    print(f"SELESAI! Semua file tersimpan di folder '{output_dir}/':")
-    print("  1. data_cleaned_unscaled.csv (Data bersih sebelum scaling/one-hot)")
-    print("  2. X_train.csv & y_train.csv (Data latih siap masuk model ML)")
-    print("  3. X_test.csv  & y_test.csv  (Data uji siap evaluasi model ML)")
-    print("  4. preprocessor.joblib       (Pipeline scikit-learn untuk deployment)")
+    print("Berhasil menyimpan berkas bersih ke folder 'processed_data/':")
+    print(f"  1. X_train.csv ({X_train_final.shape[0]} baris x {X_train_final.shape[1]} kolom)")
+    print(f"  2. X_test.csv  ({X_test_final.shape[0]} baris x {X_test_final.shape[1]} kolom)")
+    print(f"  3. y_train.csv ({y_train.shape[0]} baris x 1 kolom target)")
+    print(f"  4. y_test.csv  ({y_test.shape[0]} baris x 1 kolom target)")
+    print(f"  5. train.csv & test.csv (format gabungan fitur + target)")
+    print(f"  6. data_cleaned_unscaled.csv ({df_clean.shape[0]} baris x {df_clean.shape[1]} kolom)")
     print("=" * 70)
-
-    return X_train_df, X_test_df
 
 
 # ==============================================================================
@@ -407,16 +328,17 @@ def encode_scale_and_save(
 def main():
     df_raw = load_and_inspect("students_dropout_academic_success.csv")
     df_clean = clean_and_filter_data(df_raw)
-    df_featured = engineer_features(df_clean, output_dir="processed_data")
+    df_featured = engineer_features(df_clean)
     X_train, X_test, y_train, y_test = split_train_test(
-        df_featured, test_size=0.20, random_state=42
+        df_featured, test_size=0.20, random_state=RANDOM_STATE
     )
     X_train_capped, X_test_capped = cap_outliers(X_train, X_test)
-    encode_scale_and_save(
+    save_processed_data(
         X_train_capped,
         X_test_capped,
         y_train,
         y_test,
+        df_clean=df_featured,
         output_dir="processed_data",
     )
 

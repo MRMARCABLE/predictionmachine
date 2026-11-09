@@ -1,39 +1,63 @@
-# Data Preprocessing & Cleaning — Predict Students' Dropout and Academic Success
+# Sistem Prediksi IPK Mahasiswa & Explainable AI (SHAP)
 
-Repositori ini berisi pipeline **Data Engineering / Data Preprocessing** untuk membersihkan dan menyiapkan dataset [Predict Students' Dropout and Academic Success](https://www.kaggle.com/datasets/adilshamim8/predict-students-dropout-and-academic-success) agar siap digunakan oleh model Machine Learning (**Binary Classification: Dropout vs Graduate**).
-
-Seluruh proses terbagi menjadi **6 bagian fungsi di dalam `preprocess_data.py`** lengkap dengan catatan (*notes*) di setiap bagiannya agar mudah di-*tracking* dan dipelajari.
+Sistem berbasis **Python (`scikit-learn` & `SHAP`)** untuk memprediksi capaian nilai / **IPK akhir Semester 2** dari data awal semester, dilengkapi visualisasi faktor paling berpengaruh menggunakan **SHAP (Bar Plot)** sebagai alat bantu Dosen Pembimbing Akademik (PA).
 
 ---
 
-## Struktur Bagian di `preprocess_data.py`
+## Spesifikasi & Ruang Lingkup Proyek
 
-| Bagian | Fungsi di `preprocess_data.py` | Penjelasan Singkat |
-| :---: | :--- | :--- |
-| **Bagian A** | `load_and_inspect()` | Membaca dataset mentah (`4.424 × 37`), memeriksa *missing values* (`0`), duplikat (`0`), dan distribusi kelas awal. |
-| **Bagian B** | `clean_and_filter_data()` | Standarisasi nama kolom ke `snake_case`, memperbaiki typo `Nacionality`, membuang status `Enrolled` (fokus ke `Graduate = 0` vs `Dropout = 1`, total `3.630` baris), dan mengoreksi anomali `application_order == 0` menjadi `1`. |
-| **Bagian C** | `engineer_features()` | Membuat 6 fitur baru (`approval_rate_1st_sem`, `approval_rate_2nd_sem`, `grade_diff_sem2_sem1`, `approval_rate_diff`, `total_enrolled_units`, `total_approved_units`) dan menyimpan `data_cleaned_unscaled.csv`. |
-| **Bagian D** | `split_train_test()` | Membagi data menjadi **80% Train (`2.904` baris)** dan **20% Test (`726` baris)** secara *stratified* sebelum menghitung statistik apa pun guna mencegah **Data Leakage**. |
-| **Bagian E** | `cap_outliers()` | Melakukan *Winsorizing / Capping* pada nilai ekstrem (`age_at_enrollment`, `admission_grade`, `previous_qualification_grade`) menggunakan batas persentil ke-1 dan ke-99 dari `X_train`. |
-| **Bagian F** | `encode_scale_and_save()` | Memisahkan perlakuan untuk **25 fitur Numerik** (`StandardScaler`), **9 fitur Kategori Nominal** (`OneHotEncoder(min_frequency=0.01)`), dan **8 fitur Biner** (`0`/`1`), lalu menyimpan hasil akhir ke `processed_data/`. |
+| Komponen | Keterangan |
+| :--- | :--- |
+| **Dataset** | UCI *Students' Dropout and Academic Success* (`4.424` mahasiswa) — publik, bersih, tanpa data sensitif internal. |
+| **Target Prediksi** | Nilai rata-rata Semester 2 (`curricular_units_2nd_sem_grade`, skala `0–20` & konversi IPK `0.00–4.00`). |
+| **Fitur Input** | **31 fitur awal semester** bebas *target leakage* (data akademik Semester 1, finansial SPP/beasiswa, & pendaftaran). |
+| **Model yang Dibandingkan** | **Decision Tree Regressor** vs. **Random Forest Regressor** (5-Fold Cross-Validation Tuning). |
+| **Metrik Evaluasi** | `RMSE`, `MAE`, dan `R²`. |
+| **Feature Importance** | **SHAP (`TreeExplainer`)** dalam bentuk *Horizontal Bar Plot*. |
 
 ---
 
-## Struktur Output (`processed_data/`)
+## Struktur Repositori (Bersih Tanpa Notebook)
 
-| File | Deskripsi | Ukuran |
-| :--- | :--- | :--- |
-| `data_cleaned_unscaled.csv` | Dataset bersih + 6 fitur baru sebelum *One-Hot Encoding* & *StandardScaler* (cocok untuk EDA/visualisasi). | `3.630 × 43` |
-| `X_train.csv` | Fitur data latih yang sudah di-*encode* dan di-*scale*. | `2.904 × 111` |
-| `y_train.csv` | Target data latih (`0` = Graduate, `1` = Dropout). | `2.904 × 1` |
-| `X_test.csv` | Fitur data uji yang sudah di-*encode* dan di-*scale*. | `726 × 111` |
-| `y_test.csv` | Target data uji (`0` = Graduate, `1` = Dropout). | `726 × 1` |
-| `preprocessor.joblib` | Pipeline `ColumnTransformer` (`scikit-learn`) yang sudah di-*fit* pada data latih. | Binary Object |
+```text
+├── students_dropout_academic_success.csv   # Dataset mentah UCI (4.424 baris x 37 kolom)
+├── preprocess_data.py                      # Pipeline pembersihan data & eliminasi leakage
+├── train_and_compare.py                    # Pelatihan & perbandingan Decision Tree vs Random Forest + SHAP
+├── predictor.py                            # Modul inferensi 1 mahasiswa: predict_and_explain()
+├── generate_proposal_pdf.py                # Skrip pembuat PDF Proposal Bab 1
+├── PROPOSAL_BAB_1_KELOMPOK_1.pdf           # Dokumen PDF Proposal Bab 1
+├── requirements.txt                        # Daftar pustaka Python
+│
+├── processed_data/                         # Output dari preprocess_data.py
+│   ├── X_train.csv & y_train.csv           # Data latih (3.539 mahasiswa x 31 fitur)
+│   ├── X_test.csv  & y_test.csv            # Data uji (885 mahasiswa x 31 fitur)
+│   ├── train.csv   & test.csv              # Data gabungan fitur + target
+│   └── data_cleaned_unscaled.csv           # Dataset bersih keseluruhan
+│
+└── model/                                  # Output dari train_and_compare.py
+    ├── final_pipeline.joblib               # Pipeline model terbaik (Random Forest)
+    ├── model_metadata.json                 # Hasil perbandingan metrik & skema fitur
+    ├── model_comparison.csv                # Tabel perbandingan Decision Tree vs Random Forest
+    ├── perbandingan_dt_vs_rf.png           # Grafik bar perbandingan RMSE, MAE, & R²
+    ├── shap_feature_importance_barplot.png # Grafik SHAP Bar Plot faktor paling berpengaruh
+    └── demo_students.json                  # Sampel profil mahasiswa untuk pengujian
+```
 
 ---
 
 ## Cara Menjalankan
 
+### 1. Pembersihan Data (`preprocess_data.py`)
 ```bash
-.venv/bin/python3 preprocess_data.py
+.venv/bin/python preprocess_data.py
+```
+
+### 2. Pelatihan, Perbandingan Model & Grafik SHAP (`train_and_compare.py`)
+```bash
+.venv/bin/python train_and_compare.py
+```
+
+### 3. Uji Prediksi 1 Mahasiswa (`predictor.py`)
+```bash
+.venv/bin/python predictor.py
 ```
