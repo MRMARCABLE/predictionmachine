@@ -1,0 +1,54 @@
+{
+  "best_model": "RandomForestClassifier",
+  "best_hyperparameters": {
+    "max_depth": null,
+    "min_samples_leaf": 1,
+    "min_samples_split": 2,
+    "n_estimators": 300
+  },
+  "cv_best_f1_score": 0.9132731668990448,
+  "comparison_on_pure_test_set": {
+    "DecisionTree_Baseline": {
+      "model_name": "Decision Tree (Baseline)",
+      "train_accuracy": 1.0,
+      "train_f1_dropout": 1.0,
+      "test_precision_dropout": 0.7904761904761904,
+      "test_recall_dropout": 0.8767605633802817,
+      "test_f1_dropout": 0.8313856427378965,
+      "test_f1_macro": 0.856490007769886,
+      "test_accuracy": 0.8608815426997245,
+      "test_roc_auc": 0.863719648205978,
+      "confusion_matrix": [
+        [
+          376,
+          66
+        ],
+        [
+          35,
+          249
+        ]
+      ]
+    },
+    "RandomForest_Optimal": {
+      "model_name": "Random Forest (Optimal Tuned)",
+      "train_accuracy": 1.0,
+      "train_f1_dropout": 1.0,
+      "test_precision_dropout": 0.9130434782608695,
+      "test_recall_dropout": 0.8873239436619719,
+      "test_f1_dropout": 0.9,
+      "test_f1_macro": 0.9186098654708521,
+      "test_accuracy": 0.9228650137741047,
+      "test_roc_auc": 0.9724204958256325,
+      "confusion_matrix": [
+        [
+          418,
+          24
+        ],
+        [
+          32,
+          252
+        ]
+      ]
+    }
+  }
+}
