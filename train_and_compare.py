@@ -59,11 +59,14 @@ def load_datasets(
     print("TAHAP 3: TRAINING MODEL & SERIALISASI (DECISION TREE VS RANDOM FOREST)")
     print("=" * 75)
 
-    X_train_smote = pd.read_csv(os.path.join(data_dir, "X_train_smote.csv"))
-    y_train_smote = pd.read_csv(os.path.join(data_dir, "y_train_smote.csv"))[TARGET_COL].astype(int)
+    smote_dir = os.path.join(data_dir, "3_train_smote")
+    encoded_dir = os.path.join(data_dir, "2_encoded")
 
-    X_test_encoded = pd.read_csv(os.path.join(data_dir, "X_test_encoded.csv"))
-    y_test = pd.read_csv(os.path.join(data_dir, "y_test.csv"))[TARGET_COL].astype(int)
+    X_train_smote = pd.read_csv(os.path.join(smote_dir, "X_train_smote.csv"))
+    y_train_smote = pd.read_csv(os.path.join(smote_dir, "y_train_smote.csv"))[TARGET_COL].astype(int)
+
+    X_test_encoded = pd.read_csv(os.path.join(encoded_dir, "X_test_encoded.csv"))
+    y_test = pd.read_csv(os.path.join(encoded_dir, "y_test.csv"))[TARGET_COL].astype(int)
 
     print("[1] Ringkasan Dataset yang Dimuat:")
     print(
@@ -213,17 +216,6 @@ def save_plots_and_serialize(
 ) -> None:
     os.makedirs(model_dir, exist_ok=True)
 
-    # Bersihkan file lama dari arsitektur regresi sebelumnya jika ada
-    for old_file in [
-        "best_student_grade_predictor.joblib",
-        "metrics_summary.json",
-        "shap_feature_importance.png",
-        "shap_summary.csv",
-    ]:
-        old_path = os.path.join(model_dir, old_file)
-        if os.path.exists(old_path):
-            os.remove(old_path)
-
     # 1. Serialisasi Model menggunakan Joblib
     rf_model_path = os.path.join(model_dir, "random_forest_dropout.joblib")
     dt_model_path = os.path.join(model_dir, "decision_tree_baseline.joblib")
@@ -233,7 +225,7 @@ def save_plots_and_serialize(
     joblib.dump(dt_model, dt_model_path)
 
     # Simpan juga bundel lengkap (model + preprocessor + feature_names + best_params)
-    preprocessor_path = os.path.join("processed_data", "preprocessor.joblib")
+    preprocessor_path = os.path.join("processed_data", "2_encoded", "preprocessor.joblib")
     preprocessor = joblib.load(preprocessor_path) if os.path.exists(preprocessor_path) else None
 
     bundle = {

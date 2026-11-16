@@ -1,289 +1,456 @@
 """
 ================================================================================
-MODUL KONTRAK SERAH TERIMA ML ENGINEER -> APP DEVELOPER (PROYEK P08)
+SISTEM PRESKRIPTIF DETEKSI DINI RISIKO DROP-OUT MAHASISWA
+MENGGUNAKAN RANDOM FOREST DAN SHAP EXPLAINABILITY
+--------------------------------------------------------------------------------
+TAHAP 4 & TAHAP 5: INTEGRASI MESIN PENJELAS (SHAP TREEEXPLAINER)
+DAN PEMBANGUNAN RULE-ENGINE REKOMENDASI INTERVENSI (LOGIKA BISNIS)
 ================================================================================
-Menyediakan fungsi `predict_and_explain(data_satu_mahasiswa)` yang memuat
-Pipeline final (`model/final_pipeline.joblib`), menghitung prediksi nilai
-akademik (Regresi), dan mengekstrak faktor penjelas lokal menggunakan SHAP
-(`TreeExplainer`) yang sudah diagregasi kembali ke nama fitur asli.
+Modul ini memuat model Random Forest dan Preprocessor yang telah diserialisasi,
+kemudian menyediakan:
+  1. `explain_single_student()` -> Menghitung probabilitas Dropout & mengekstrak
+     Top 3 fitur dengan nilai SHAP absolut tertinggi menggunakan shap.TreeExplainer.
+  2. `generate_recommendations()` -> Rule-Engine (if-else & dictionary mapping)
+     yang menerjemahkan Top 3 fitur SHAP + probabilitas DO menjadi kalimat aksi
+     preskriptif bagi pihak kampus / Dosen Pembimbing Akademik (PA).
 ================================================================================
 """
 
-from __future__ import annotations
-
 import json
 import os
-from functools import lru_cache
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+os.environ["MPLCONFIGDIR"] = "/tmp/matplotlib"
 
 import joblib
 import numpy as np
 import pandas as pd
 import shap
 
-DEFAULT_MODEL_PATH = os.path.join("model", "final_pipeline.joblib")
-DEFAULT_METADATA_PATH = os.path.join("model", "model_metadata.json")
+# ==============================================================================
+# DAFTAR 36 FITUR ASLI & LABEL BAHASA INDONESIA UNTUK INTERPRETASI
+# ==============================================================================
+CATEGORICAL_NOMINAL_COLS = [
+    "Marital status",
+    "Application mode",
+    "Course",
+    "Previous qualification",
+    "Nacionality",
+    "Mother's qualification",
+    "Father's qualification",
+    "Mother's occupation",
+    "Father's occupation",
+]
 
-# Label bahasa Indonesia yang ramah pengguna untuk aplikasi dosen PA
 FEATURE_LABELS_ID: Dict[str, str] = {
-    "marital_status": "Status Pernikahan",
-    "application_mode": "Jalur Pendaftaran",
-    "application_order": "Urutan Pilihan Jurusan",
-    "course": "Program Studi (Kode Jurusan)",
-    "daytime_evening_attendance": "Kelas Pagi / Malam",
-    "previous_qualification": "Kualifikasi Pendidikan Sebelumnya",
-    "previous_qualification_grade": "Nilai Pendidikan Sebelumnya",
-    "nationality": "Kewarganegaraan",
-    "mothers_qualification": "Pendidikan Ibu",
-    "fathers_qualification": "Pendidikan Ayah",
-    "mothers_occupation": "Pekerjaan Ibu",
-    "fathers_occupation": "Pekerjaan Ayah",
-    "admission_grade": "Nilai Ujian Masuk (Admission Grade)",
-    "displaced": "Mahasiswa Perantau (Displaced)",
-    "educational_special_needs": "Kebutuhan Khusus Pendidikan",
-    "debtor": "Memiliki Tunggakan (Debtor)",
-    "tuition_fees_up_to_date": "UKT / SPP Lancar",
-    "gender": "Jenis Kelamin",
-    "scholarship_holder": "Penerima Beasiswa",
-    "age_at_enrollment": "Usia Saat Mendaftar",
-    "international": "Mahasiswa Internasional",
-    "curricular_units_1st_sem_credited": "SKS Diakui (Sem 1)",
-    "curricular_units_1st_sem_enrolled": "SKS Diambil (Sem 1)",
-    "curricular_units_1st_sem_evaluations": "Jumlah Evaluasi Ujian (Sem 1)",
-    "curricular_units_1st_sem_approved": "SKS Lulus (Sem 1)",
-    "curricular_units_1st_sem_grade": "Nilai Rata-Rata Semester 1",
-    "curricular_units_1st_sem_without_evaluations": "SKS Tanpa Evaluasi (Sem 1)",
-    "unemployment_rate": "Tingkat Pengangguran Makro (%)",
-    "inflation_rate": "Tingkat Inflasi Makro (%)",
-    "gdp": "Pertumbuhan GDP Makro (%)",
-    "approval_rate_1st_sem": "Rasio Kelulusan SKS Semester 1",
+    # A. Demografi
+    "Marital status": "Status Pernikahan",
+    "Nacionality": "Kewarganegaraan",
+    "Displaced": "Mahasiswa Rantau (Displaced)",
+    "Gender": "Jenis Kelamin",
+    "Age at enrollment": "Usia Saat Mendaftar",
+    "International": "Mahasiswa Internasional",
+    # B. Sosial-Ekonomi & Finansial
+    "Mother's qualification": "Pendidikan Ibu",
+    "Father's qualification": "Pendidikan Ayah",
+    "Mother's occupation": "Pekerjaan Ibu",
+    "Father's occupation": "Pekerjaan Ayah",
+    "Educational special needs": "Kebutuhan Khusus Pendidikan",
+    "Debtor": "Status Memiliki Tunggakan/Hutang (Debtor)",
+    "Tuition fees up to date": "Kepatuhan Pembayaran UKT/SPP Tepat Waktu",
+    "Scholarship holder": "Status Penerima Beasiswa",
+    "Unemployment rate": "Tingkat Pengangguran Makro",
+    "Inflation rate": "Tingkat Inflasi Makro",
+    "GDP": "Pertumbuhan PDB (GDP)",
+    # C. Akademik Awal / Admisi
+    "Application mode": "Jalur Pendaftaran Masuk",
+    "Application order": "Urutan Pilihan Program Studi",
+    "Course": "Program Studi (Jurusan)",
+    "Daytime/evening attendance": "Waktu Perkuliahan (Pagi/Malam)",
+    "Previous qualification": "Kualifikasi Pendidikan Sebelumnya",
+    "Previous qualification (grade)": "Nilai Pendidikan Sebelumnya",
+    "Admission grade": "Nilai Ujian Masuk (Admission Grade)",
+    # D1. Akademik Semester 1
+    "Curricular units 1st sem (credited)": "SKS Diakui/Konversi Semester 1",
+    "Curricular units 1st sem (enrolled)": "SKS Diambil Semester 1",
+    "Curricular units 1st sem (evaluations)": "Jumlah Evaluasi Ujian Semester 1",
+    "Curricular units 1st sem (approved)": "Jumlah Mata Kuliah/SKS Lulus Semester 1",
+    "Curricular units 1st sem (grade)": "Rata-rata Nilai Semester 1",
+    "Curricular units 1st sem (without evaluations)": "Mata Kuliah Tanpa Evaluasi Semester 1",
+    # D2. Akademik Semester 2
+    "Curricular units 2nd sem (credited)": "SKS Diakui/Konversi Semester 2",
+    "Curricular units 2nd sem (enrolled)": "SKS Diambil Semester 2",
+    "Curricular units 2nd sem (evaluations)": "Jumlah Evaluasi Ujian Semester 2",
+    "Curricular units 2nd sem (approved)": "Jumlah Mata Kuliah/SKS Lulus Semester 2",
+    "Curricular units 2nd sem (grade)": "Rata-rata Nilai Semester 2",
+    "Curricular units 2nd sem (without evaluations)": "Mata Kuliah Tanpa Evaluasi Semester 2",
 }
 
 
-@lru_cache(maxsize=2)
-def load_artifacts(
-    model_path: str = DEFAULT_MODEL_PATH,
-    metadata_path: str = DEFAULT_METADATA_PATH,
-) -> Dict[str, Any]:
-    """Memuat Pipeline model, metadata fitur, dan menginisialisasi SHAP TreeExplainer."""
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(
-            f"File model tidak ditemukan di '{model_path}'. "
-            "Jalankan skrip `python train_and_compare.py` terlebih dahulu."
+# ==============================================================================
+# 1. PEMUATAN MODEL, PREPROCESSOR & INISIALISASI SHAP TREEEXPLAINER
+# ==============================================================================
+class DropoutPrescriptivePredictor:
+    """
+    Kelas terpadu untuk melakukan prediksi risiko Drop-Out, ekstraksi penjelasan
+    SHAP (Top 3 Fitur), dan pembuatan rekomendasi preskriptif berbasis aturan.
+    """
+
+    def __init__(
+        self,
+        model_path: str = "model/random_forest_dropout.joblib",
+        preprocessor_path: str = "processed_data/2_encoded/preprocessor.joblib",
+    ) -> None:
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"File model tidak ditemukan di: {model_path}")
+        if not os.path.exists(preprocessor_path):
+            raise FileNotFoundError(f"File preprocessor tidak ditemukan di: {preprocessor_path}")
+
+        self.model = joblib.load(model_path)
+        self.preprocessor = joblib.load(preprocessor_path)
+        self.encoded_feature_names: List[str] = list(self.preprocessor.get_feature_names_out())
+
+        # Inisialisasi shap.TreeExplainer khusus untuk arsitektur pohon (Random Forest)
+        self.explainer = shap.TreeExplainer(self.model)
+
+    @staticmethod
+    def _map_encoded_col_to_original(encoded_col: str) -> str:
+        """
+        Memetakan nama kolom hasil One-Hot Encoding (misal 'Course_9500' atau
+        'Marital status_1') kembali ke nama fitur induk aslinya ('Course', 'Marital status').
+        """
+        for cat_col in CATEGORICAL_NOMINAL_COLS:
+            prefix = f"{cat_col}_"
+            if encoded_col.startswith(prefix):
+                return cat_col
+        return encoded_col
+
+    def _extract_dropout_shap_vector(self, X_encoded_row: pd.DataFrame) -> np.ndarray:
+        """
+        Mengekstrak vektor nilai SHAP (panjang 227) khusus untuk kelas positif
+        Dropout (label = 1) pada satu baris data mahasiswa.
+        """
+        shap_vals = self.explainer.shap_values(X_encoded_row)
+
+        # Penanganan kompatibilitas berbagai versi library SHAP:
+        # - Jika list [shap_class_0, shap_class_1], ambil indeks 1 (Dropout)
+        # - Jika array 3D (n_samples, n_features, n_classes), ambil [0, :, 1]
+        if isinstance(shap_vals, list):
+            return np.asarray(shap_vals[1][0], dtype=float)
+        shap_arr = np.asarray(shap_vals, dtype=float)
+        if shap_arr.ndim == 3:
+            return shap_arr[0, :, 1]
+        return shap_arr[0]
+
+    # ==========================================================================
+    # TAHAP 4: FUNGSI PREDIKSI & PENJELASAN TOP 3 FITUR SHAP (1 MAHASISWA)
+    # ==========================================================================
+    def explain_single_student(
+        self,
+        student_data: Union[Dict[str, Any], pd.Series, pd.DataFrame],
+        top_k: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        Menerima input 1 baris data mahasiswa (36 fitur asli), lalu mengembalikan:
+          - Probabilitas prediksi Dropout & Graduate
+          - Label hasil prediksi & tingkat risiko (LOW / MEDIUM / HIGH)
+          - Daftar Top-K (default 3) fitur dengan nilai SHAP absolut tertinggi
+          - Rekomendasi intervensi dari Rule-Engine (Tahap 5)
+        """
+        if isinstance(student_data, dict):
+            df_row = pd.DataFrame([student_data])
+        elif isinstance(student_data, pd.Series):
+            df_row = student_data.to_frame().T
+        elif isinstance(student_data, pd.DataFrame):
+            df_row = student_data.iloc[[0]].copy()
+        else:
+            raise TypeError("Input student_data harus berupa dict, pd.Series, atau pd.DataFrame.")
+
+        # 1. Transformasi 36 fitur mentah -> 227 fitur terenkode menggunakan preprocessor
+        X_encoded_arr = self.preprocessor.transform(df_row)
+        X_encoded_df = pd.DataFrame(X_encoded_arr, columns=self.encoded_feature_names)
+
+        # 2. Hitung probabilitas prediksi dari Random Forest
+        proba = self.model.predict_proba(X_encoded_df)[0]
+        prob_graduate = float(proba[0])
+        prob_dropout = float(proba[1])
+        pred_code = int(prob_dropout >= 0.50)
+        pred_label = "Dropout" if pred_code == 1 else "Graduate"
+
+        if prob_dropout >= 0.70:
+            risk_level = "HIGH (Risiko Sangat Tinggi)"
+        elif prob_dropout >= 0.40:
+            risk_level = "MEDIUM (Risiko Sedang / Waspada)"
+        else:
+            risk_level = "LOW (Risiko Rendah / Aman)"
+
+        # 3. Hitung nilai SHAP untuk kelas Dropout (1) dan agregasikan kembali ke 36 fitur asli
+        shap_vec_227 = self._extract_dropout_shap_vector(X_encoded_df)
+
+        aggregated_shap: Dict[str, float] = {}
+        for enc_col, s_val in zip(self.encoded_feature_names, shap_vec_227):
+            orig_col = self._map_encoded_col_to_original(enc_col)
+            aggregated_shap[orig_col] = aggregated_shap.get(orig_col, 0.0) + float(s_val)
+
+        # 4. Urutkan fitur berdasarkan nilai absolut SHAP tertinggi (|SHAP|)
+        sorted_features = sorted(
+            aggregated_shap.items(),
+            key=lambda item: abs(item[1]),
+            reverse=True,
         )
 
-    pipeline = joblib.load(model_path)
-    metadata: Dict[str, Any] = {}
-    if os.path.exists(metadata_path):
-        with open(metadata_path, "r", encoding="utf-8") as f:
-            metadata = json.load(f)
+        raw_dict = df_row.iloc[0].to_dict()
+        top_shap_features: List[Dict[str, Any]] = []
 
-    preprocessor = pipeline.named_steps["preprocessor"]
-    regressor = pipeline.named_steps["model"]
-    explainer = shap.TreeExplainer(regressor)
+        for rank, (feat_name, shap_val) in enumerate(sorted_features[:top_k], start=1):
+            raw_val = raw_dict.get(feat_name, None)
+            if isinstance(raw_val, (np.integer, np.floating)):
+                raw_val = raw_val.item()
 
-    return {
-        "pipeline": pipeline,
-        "preprocessor": preprocessor,
-        "regressor": regressor,
-        "explainer": explainer,
-        "metadata": metadata,
-    }
+            direction = (
+                "Mendorong Risiko Dropout (+)"
+                if shap_val > 0
+                else "Menahan Risiko / Mendorong Lulus (-)"
+            )
+            top_shap_features.append(
+                {
+                    "rank": rank,
+                    "feature_name": feat_name,
+                    "feature_label_id": FEATURE_LABELS_ID.get(feat_name, feat_name),
+                    "raw_value": raw_val,
+                    "shap_value": round(float(shap_val), 4),
+                    "abs_shap_value": round(abs(float(shap_val)), 4),
+                    "impact_direction": direction,
+                }
+            )
 
-
-def map_transformed_to_original_feature(
-    transformed_col: str, original_features: List[str]
-) -> str:
-    """
-    Memetakan nama kolom hasil ColumnTransformer/OneHotEncoder kembali ke nama
-    fitur aslinya (contoh: 'course_9254' -> 'course').
-    """
-    if transformed_col in original_features:
-        return transformed_col
-
-    # Urutkan dari nama terpanjang agar prefix yang mirip tidak salah cocok
-    for orig in sorted(original_features, key=len, reverse=True):
-        if transformed_col.startswith(orig + "_"):
-            return orig
-    return transformed_col
-
-
-def _prepare_single_row_df(
-    data_satu_mahasiswa: Union[Dict[str, Any], pd.Series, pd.DataFrame],
-    expected_features: List[str],
-    default_values: Dict[str, Any],
-) -> pd.DataFrame:
-    """Mengubah input dict/Series/DataFrame menjadi DataFrame 1 baris sesuai urutan kolom."""
-    if isinstance(data_satu_mahasiswa, pd.DataFrame):
-        if len(data_satu_mahasiswa) == 0:
-            raise ValueError("DataFrame input kosong.")
-        row_dict = data_satu_mahasiswa.iloc[0].to_dict()
-    elif isinstance(data_satu_mahasiswa, pd.Series):
-        row_dict = data_satu_mahasiswa.to_dict()
-    elif isinstance(data_satu_mahasiswa, dict):
-        row_dict = dict(data_satu_mahasiswa)
-    else:
-        raise TypeError(
-            "Input `data_satu_mahasiswa` harus berupa dict, pandas.Series, atau pandas.DataFrame."
+        # 5. Panggil Rule-Engine Rekomendasi (Tahap 5)
+        recommendations = generate_recommendations(
+            prob_dropout=prob_dropout,
+            top_shap_features=top_shap_features,
+            student_raw_data=raw_dict,
         )
 
-    # Isi otomatis fitur `approval_rate_1st_sem` jika belum dihitung oleh form aplikasi
-    if (
-        "approval_rate_1st_sem" in expected_features
-        and "approval_rate_1st_sem" not in row_dict
+        return {
+            "status": "success",
+            "prediction": {
+                "label": pred_label,
+                "label_code": pred_code,
+                "probability_dropout": round(prob_dropout, 4),
+                "probability_dropout_pct": round(prob_dropout * 100, 2),
+                "probability_graduate": round(prob_graduate, 4),
+                "probability_graduate_pct": round(prob_graduate * 100, 2),
+                "risk_level": risk_level,
+            },
+            "top_3_shap_features": top_shap_features,
+            "recommendations": recommendations,
+        }
+
+
+# ==============================================================================
+# TAHAP 5: PEMBANGUNAN RULE-ENGINE REKOMENDASI (LOGIKA BISNIS)
+# ==============================================================================
+def generate_recommendations(
+    prob_dropout: float,
+    top_shap_features: List[Dict[str, Any]],
+    student_raw_data: Dict[str, Any],
+) -> List[str]:
+    """
+    Menerjemahkan 3 fitur teratas dari SHAP beserta nilai aktual mahasiswa dan
+    probabilitas Dropout menjadi kalimat aksi intervensi preskriptif.
+    """
+    recommendations: List[str] = []
+
+    # Kamus pemetaan aturan rekomendasi berbasis fitur & kondisi aktual mahasiswa
+    for feat_info in top_shap_features:
+        feat = feat_info["feature_name"]
+        val = student_raw_data.get(feat)
+        shap_val = feat_info["shap_value"]
+
+        # ----------------------------------------------------------------------
+        # 1. ATURAN DOMAIN FINANSIAL & SOSIAL-EKONOMI
+        # ----------------------------------------------------------------------
+        if feat == "Debtor":
+            if int(val) == 1 and prob_dropout > 0.70:
+                recommendations.append(
+                    "Rekomendasi: Jadwalkan pertemuan dengan bagian keuangan untuk restrukturisasi pembayaran."
+                )
+            elif int(val) == 1:
+                recommendations.append(
+                    "Rekomendasi: Lakukan konseling finansial dini terkait status hutang/tunggakan biaya pendidikan mahasiswa."
+                )
+
+        elif feat == "Tuition fees up to date":
+            if int(val) == 0 and prob_dropout > 0.70:
+                recommendations.append(
+                    "Rekomendasi: Hubungi mahasiswa segera melalui bagian keuangan untuk skema cicilan UKT/SPP atau penangguhan pembayaran."
+                )
+            elif int(val) == 0:
+                recommendations.append(
+                    "Rekomendasi: Kirimkan pengingat pembayaran UKT/SPP dan tawarkan konsultasi bantuan biaya kuliah."
+                )
+
+        elif feat == "Scholarship holder":
+            if int(val) == 0 and shap_val > 0:
+                recommendations.append(
+                    "Rekomendasi: Arahkan mahasiswa ke bagian Kemahasiswaan untuk pendaftaran beasiswa bantuan internal atau keringanan UKT."
+                )
+
+        # ----------------------------------------------------------------------
+        # 2. ATURAN DOMAIN PERFORMA AKADEMIK SEMESTER 1 & SEMESTER 2
+        # ----------------------------------------------------------------------
+        elif feat in [
+            "Curricular units 2nd sem (approved)",
+            "Curricular units 1st sem (approved)",
+        ]:
+            sem_label = "Semester 2" if "2nd sem" in feat else "Semester 1"
+            if float(val) <= 3 or shap_val > 0:
+                recommendations.append(
+                    f"Rekomendasi: Wajibkan sesi konseling dengan Dosen Pembimbing Akademik (PA) karena rendahnya kelulusan mata kuliah pada {sem_label} (lulus: {int(val)} MK) serta evaluasi beban SKS."
+                )
+
+        elif feat in [
+            "Curricular units 2nd sem (grade)",
+            "Curricular units 1st sem (grade)",
+        ]:
+            sem_label = "Semester 2" if "2nd sem" in feat else "Semester 1"
+            if float(val) < 11.0 or shap_val > 0:
+                recommendations.append(
+                    f"Rekomendasi: Masukkan mahasiswa ke dalam program Academic Mentoring / Tutorial Sebaya untuk memperbaiki nilai rata-rata {sem_label} (nilai saat ini: {float(val):.2f})."
+                )
+
+        elif feat in [
+            "Curricular units 2nd sem (evaluations)",
+            "Curricular units 1st sem (evaluations)",
+            "Curricular units 2nd sem (without evaluations)",
+            "Curricular units 1st sem (without evaluations)",
+        ]:
+            if shap_val > 0:
+                recommendations.append(
+                    "Rekomendasi: Lakukan pemantauan presensi perkuliahan dan pastikan mahasiswa mengikuti ujian akhir semester secara penuh."
+                )
+
+        elif feat in [
+            "Curricular units 2nd sem (enrolled)",
+            "Curricular units 1st sem (enrolled)",
+        ]:
+            if shap_val > 0:
+                recommendations.append(
+                    "Rekomendasi: Tinjau ulang pengambilan KRS bersama Dosen Wali agar jumlah SKS yang diambil sesuai dengan kapasitas akademik mahasiswa."
+                )
+
+        # ----------------------------------------------------------------------
+        # 3. ATURAN DOMAIN ADMISI & DEMOGRAFI
+        # ----------------------------------------------------------------------
+        elif feat in ["Admission grade", "Previous qualification (grade)"]:
+            if shap_val > 0:
+                recommendations.append(
+                    "Rekomendasi: Berikan kelas matrikulasi atau penguatan materi dasar program studi untuk menjembatani kesiapan akademik awal."
+                )
+
+        elif feat == "Age at enrollment":
+            if float(val) >= 23 and shap_val > 0:
+                recommendations.append(
+                    "Rekomendasi: Tawarkan fleksibilitas jadwal bimbingan akademik dan dukungan manajemen waktu bagi mahasiswa berusia dewasa/bekerja."
+                )
+
+        elif feat == "Course":
+            if shap_val > 0:
+                recommendations.append(
+                    "Rekomendasi: Lakukan asesmen minat-bakat dan pendampingan adaptasi kurikulum pada Program Studi yang sedang ditempuh."
+                )
+
+    # Jika mahasiswa berisiko rendah (Graduate) atau belum ada aturan spesifik yang terpicu
+    if not recommendations:
+        if prob_dropout >= 0.50:
+            recommendations.append(
+                "Rekomendasi: Jadwalkan evaluasi berkala bersama Dosen Pembimbing Akademik (PA) untuk memantau faktor risiko utama dari analisis SHAP."
+            )
+        else:
+            recommendations.append(
+                "Rekomendasi: Pertahankan performa akademik dan status administrasi saat ini; mahasiswa berada pada jalur kelulusan yang aman."
+            )
+
+    # Hilangkan duplikasi kalimat rekomendasi sambil menjaga urutan prioritas SHAP
+    unique_recommendations: List[str] = []
+    for rec in recommendations:
+        if rec not in unique_recommendations:
+            unique_recommendations.append(rec)
+
+    return unique_recommendations
+
+
+# ==============================================================================
+# DEMONSTRASI & PENGUJIAN OTOMATIS PADA SAMPEL MAHASISWA ASLI
+# ==============================================================================
+def main() -> None:
+    print("=" * 80)
+    print("TAHAP 4 & 5: PENGUJIAN MESIN PENJELAS SHAP & RULE-ENGINE REKOMENDASI")
+    print("=" * 80)
+
+    predictor = DropoutPrescriptivePredictor()
+
+    # Load data uji mentah (36 fitur asli sebelum encoding)
+    X_test_raw = pd.read_csv("processed_data/1_raw_split/X_test_raw.csv")
+    y_test = pd.read_csv("processed_data/1_raw_split/y_test.csv")["Target_Binary"]
+
+    # Kasus Uji 1: Mahasiswa dari Test Set (Indeks 117) dengan masalah finansial (Debtor == 1 & UKT menunggak)
+    student_case_1 = X_test_raw.loc[117].to_dict()
+
+    # Kasus Uji 2: Mahasiswa berprestasi dari Test Set yang Aktual Graduate
+    grad_mask = (
+        (X_test_raw["Tuition fees up to date"] == 1)
+        & (X_test_raw["Debtor"] == 0)
+        & (X_test_raw["Curricular units 2nd sem (approved)"] >= 6)
+        & (y_test == 0)
+    )
+    sample_grad_idx = X_test_raw[grad_mask].index[0]
+    student_case_2 = X_test_raw.loc[sample_grad_idx].to_dict()
+
+    for idx_case, (title, student_dict) in enumerate(
+        [
+            ("KASUS 1: Mahasiswa Berisiko Tinggi (Memiliki Tunggakan/Debtor=1)", student_case_1),
+            ("KASUS 2: Mahasiswa Berisiko Rendah (Akademik & Finansial Lancar)", student_case_2),
+        ],
+        start=1,
     ):
-        enrolled = float(row_dict.get("curricular_units_1st_sem_enrolled", 0) or 0)
-        approved = float(row_dict.get("curricular_units_1st_sem_approved", 0) or 0)
-        row_dict["approval_rate_1st_sem"] = approved / enrolled if enrolled > 0 else 0.0
+        result = predictor.explain_single_student(student_dict)
+        pred = result["prediction"]
 
-    # Pastikan semua kolom yang dibutuhkan model tersedia
-    clean_row: Dict[str, Any] = {}
-    for col in expected_features:
-        if col in row_dict and row_dict[col] is not None and not pd.isna(row_dict[col]):
-            clean_row[col] = row_dict[col]
-        else:
-            clean_row[col] = default_values.get(col, 0)
+        print(f"\n[{idx_case}] {title}")
+        print("-" * 80)
+        print(f"  * Prediksi Status       : {pred['label']} (Kode: {pred['label_code']})")
+        print(f"  * Probabilitas Dropout  : {pred['probability_dropout_pct']:.2f}% ({pred['probability_dropout']:.4f})")
+        print(f"  * Probabilitas Graduate : {pred['probability_graduate_pct']:.2f}% ({pred['probability_graduate']:.4f})")
+        print(f"  * Kategori Risiko       : {pred['risk_level']}")
+        print("\n  * Top 3 Fitur dengan Nilai SHAP Absolut Tertinggi:")
+        for f in result["top_3_shap_features"]:
+            print(
+                f"    {f['rank']}. {f['feature_name']} ({f['feature_label_id']})\n"
+                f"       - Nilai Aktual Mahasiswa : {f['raw_value']}\n"
+                f"       - Nilai SHAP             : {f['shap_value']:+.4f} (|SHAP| = {f['abs_shap_value']:.4f})\n"
+                f"       - Arah Kontribusi        : {f['impact_direction']}"
+            )
+        print("\n  * Output Rule-Engine Rekomendasi:")
+        for rec in result["recommendations"]:
+            print(f"    -> {rec}")
 
-    return pd.DataFrame([clean_row], columns=expected_features)
-
-
-def predict_and_explain(
-    data_satu_mahasiswa: Union[Dict[str, Any], pd.Series, pd.DataFrame],
-    model_path: str = DEFAULT_MODEL_PATH,
-    metadata_path: str = DEFAULT_METADATA_PATH,
-    top_k: int = 5,
-) -> Dict[str, Any]:
-    """
-    Memprediksi nilai akhir akademik 1 mahasiswa dan mengembalikan faktor penjelas SHAP.
-
-    Parameters
-    ----------
-    data_satu_mahasiswa : dict | pd.Series | pd.DataFrame
-        Data fitur 1 mahasiswa (nama kolom asli sebelum One-Hot Encoding).
-    model_path : str
-        Lokasi file `.joblib` Pipeline final.
-    metadata_path : str
-        Lokasi file `.json` metadata model.
-    top_k : int
-        Jumlah faktor penjelas terpenting yang dikembalikan pada `top_factors`.
-
-    Returns
-    -------
-    dict
-        Berisi:
-        - `predicted_grade`: float (prediksi nilai pada skala asli 0.0 - 20.0)
-        - `predicted_gpa_4`: float (ekuivalen skala IPK 0.00 - 4.00)
-        - `base_value`: float (nilai rata-rata dasar dari model)
-        - `top_factors`: list of dict (faktor utama yang menaikkan/menurunkan prediksi)
-        - `all_factors`: list of dict (seluruh fitur diurutkan berdasarkan |SHAP|)
-        - `summary_text`: str (1 kalimat penjelasan dalam bahasa awam untuk dosen PA)
-    """
-    artifacts = load_artifacts(model_path=model_path, metadata_path=metadata_path)
-    pipeline = artifacts["pipeline"]
-    preprocessor = artifacts["preprocessor"]
-    explainer = artifacts["explainer"]
-    metadata = artifacts["metadata"]
-
-    expected_features: List[str] = metadata.get(
-        "feature_names_in", list(preprocessor.feature_names_in_)
-    )
-    default_values: Dict[str, Any] = metadata.get("default_feature_values", {})
-
-    X_one = _prepare_single_row_df(
-        data_satu_mahasiswa=data_satu_mahasiswa,
-        expected_features=expected_features,
-        default_values=default_values,
-    )
-
-    # 1. Prediksi nilai akhir
-    raw_pred = float(pipeline.predict(X_one)[0])
-    predicted_grade = float(np.clip(raw_pred, 0.0, 20.0))
-    predicted_gpa_4 = round((predicted_grade / 20.0) * 4.0, 2)
-
-    # 2. Transformasi fitur & hitung nilai SHAP lokal
-    X_trans = preprocessor.transform(X_one)
-    transformed_cols = list(preprocessor.get_feature_names_out())
-
-    shap_values_raw = explainer.shap_values(X_trans)
-    if isinstance(shap_values_raw, list):
-        shap_row = np.asarray(shap_values_raw[0]).flatten()
-    else:
-        shap_row = np.asarray(shap_values_raw).flatten()
-
-    expected_val = explainer.expected_value
-    if isinstance(expected_val, (list, np.ndarray)):
-        base_value = float(np.asarray(expected_val).flatten()[0])
-    else:
-        base_value = float(expected_val)
-
-    # 3. Agregasi nilai SHAP dari pecahan One-Hot Encoding kembali ke fitur asli
-    aggregated_shap: Dict[str, float] = {feat: 0.0 for feat in expected_features}
-    for col_name, val in zip(transformed_cols, shap_row):
-        orig_feat = map_transformed_to_original_feature(col_name, expected_features)
-        aggregated_shap[orig_feat] = aggregated_shap.get(orig_feat, 0.0) + float(val)
-
-    # 4. Susun daftar faktor diurutkan dari pengaruh absolut terbesar
-    sorted_features = sorted(
-        aggregated_shap.items(), key=lambda item: abs(item[1]), reverse=True
-    )
-
-    all_factors: List[Dict[str, Any]] = []
-    for feat_name, shap_val in sorted_features:
-        raw_val = X_one.iloc[0][feat_name]
-        if isinstance(raw_val, (np.integer, int)):
-            raw_val_clean: Any = int(raw_val)
-        elif isinstance(raw_val, (np.floating, float)):
-            raw_val_clean = round(float(raw_val), 3)
-        else:
-            raw_val_clean = raw_val
-
-        direction = "menaikkan" if shap_val >= 0 else "menurunkan"
-        all_factors.append(
+    demo_output = predictor.explain_single_student(student_case_1)
+    sample_json_path = "model/sample_prediction_output.json"
+    with open(sample_json_path, "w", encoding="utf-8") as f:
+        json.dump(
             {
-                "feature": feat_name,
-                "feature_label": FEATURE_LABELS_ID.get(feat_name, feat_name),
-                "raw_value": raw_val_clean,
-                "shap_impact": round(float(shap_val), 4),
-                "abs_impact": round(abs(float(shap_val)), 4),
-                "direction": direction,
-            }
+                "input_student_36_features": student_case_1,
+                "output_response": demo_output,
+            },
+            f,
+            indent=2,
         )
 
-    top_factors = all_factors[:top_k]
+    print("\n" + "=" * 80)
+    print(f"Contoh payload request & response JSON disimpan di: {sample_json_path}")
+    print("=" * 80)
 
-    # 5. Buat 1 kalimat penjelasan bahasa awam sesuai Bab 5 Panduan P08
-    pos_factors = [f for f in top_factors if f["shap_impact"] > 0.05]
-    neg_factors = [f for f in top_factors if f["shap_impact"] < -0.05]
 
-    parts: List[str] = [
-        f"Prediksi nilai akhir mahasiswa adalah {predicted_grade:.2f}/20.00 "
-        f"(setara IPK {predicted_gpa_4:.2f}/4.00, dari rata-rata dasar {base_value:.2f})"
-    ]
-    if pos_factors:
-        top_pos = pos_factors[0]
-        parts.append(
-            f"terutama didorong naik oleh {top_pos['feature_label']} "
-            f"({top_pos['raw_value']}, +{top_pos['shap_impact']:.2f} poin)"
-        )
-    if neg_factors:
-        top_neg = neg_factors[0]
-        parts.append(
-            f"serta diturunkan oleh {top_neg['feature_label']} "
-            f"({top_neg['raw_value']}, {top_neg['shap_impact']:.2f} poin)"
-        )
-
-    summary_text = ", ".join(parts) + "."
-
-    return {
-        "predicted_grade": round(predicted_grade, 2),
-        "predicted_gpa_4": predicted_gpa_4,
-        "base_value": round(base_value, 2),
-        "top_factors": top_factors,
-        "all_factors": all_factors,
-        "summary_text": summary_text,
-        "disclaimer": (
-            "Catatan Etika: Hasil prediksi ini merupakan alat bantu pendukung keputusan "
-            "bagi Dosen Pembimbing Akademik (PA), bukan vonis mutlak terhadap mahasiswa."
-        ),
-    }
-
+if __name__ == "__main__":
+    main()

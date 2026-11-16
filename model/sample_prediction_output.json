@@ -1,0 +1,85 @@
+{
+  "input_student_36_features": {
+    "Marital status": 2.0,
+    "Application mode": 39.0,
+    "Application order": 1.0,
+    "Course": 9003.0,
+    "Daytime/evening attendance": 1.0,
+    "Previous qualification": 1.0,
+    "Previous qualification (grade)": 111.0,
+    "Nacionality": 1.0,
+    "Mother's qualification": 1.0,
+    "Father's qualification": 3.0,
+    "Mother's occupation": 4.0,
+    "Father's occupation": 2.0,
+    "Admission grade": 162.4,
+    "Displaced": 0.0,
+    "Educational special needs": 0.0,
+    "Debtor": 1.0,
+    "Tuition fees up to date": 0.0,
+    "Gender": 1.0,
+    "Scholarship holder": 0.0,
+    "Age at enrollment": 49.0,
+    "International": 0.0,
+    "Curricular units 1st sem (credited)": 4.0,
+    "Curricular units 1st sem (enrolled)": 12.0,
+    "Curricular units 1st sem (evaluations)": 16.0,
+    "Curricular units 1st sem (approved)": 5.0,
+    "Curricular units 1st sem (grade)": 11.6,
+    "Curricular units 1st sem (without evaluations)": 0.0,
+    "Curricular units 2nd sem (credited)": 2.0,
+    "Curricular units 2nd sem (enrolled)": 7.0,
+    "Curricular units 2nd sem (evaluations)": 7.0,
+    "Curricular units 2nd sem (approved)": 5.0,
+    "Curricular units 2nd sem (grade)": 11.2,
+    "Curricular units 2nd sem (without evaluations)": 0.0,
+    "Unemployment rate": 8.9,
+    "Inflation rate": 1.4,
+    "GDP": 3.51
+  },
+  "output_response": {
+    "status": "success",
+    "prediction": {
+      "label": "Dropout",
+      "label_code": 1,
+      "probability_dropout": 0.7567,
+      "probability_dropout_pct": 75.67,
+      "probability_graduate": 0.2433,
+      "probability_graduate_pct": 24.33,
+      "risk_level": "HIGH (Risiko Sangat Tinggi)"
+    },
+    "top_3_shap_features": [
+      {
+        "rank": 1,
+        "feature_name": "Tuition fees up to date",
+        "feature_label_id": "Kepatuhan Pembayaran UKT/SPP Tepat Waktu",
+        "raw_value": 0.0,
+        "shap_value": 0.1725,
+        "abs_shap_value": 0.1725,
+        "impact_direction": "Mendorong Risiko Dropout (+)"
+      },
+      {
+        "rank": 2,
+        "feature_name": "Debtor",
+        "feature_label_id": "Status Memiliki Tunggakan/Hutang (Debtor)",
+        "raw_value": 1.0,
+        "shap_value": 0.065,
+        "abs_shap_value": 0.065,
+        "impact_direction": "Mendorong Risiko Dropout (+)"
+      },
+      {
+        "rank": 3,
+        "feature_name": "Curricular units 2nd sem (approved)",
+        "feature_label_id": "Jumlah Mata Kuliah/SKS Lulus Semester 2",
+        "raw_value": 5.0,
+        "shap_value": -0.0525,
+        "abs_shap_value": 0.0525,
+        "impact_direction": "Menahan Risiko / Mendorong Lulus (-)"
+      }
+    ],
+    "recommendations": [
+      "Rekomendasi: Hubungi mahasiswa segera melalui bagian keuangan untuk skema cicilan UKT/SPP atau penangguhan pembayaran.",
+      "Rekomendasi: Jadwalkan pertemuan dengan bagian keuangan untuk restrukturisasi pembayaran."
+    ]
+  }
+}

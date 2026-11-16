@@ -44,12 +44,26 @@ Dokumen ini berfungsi sebagai **Catatan Progres & Panduan Handover Tim** setelah
   * **Train Set Sebelum SMOTE (`X_train_encoded`):** `2.904 baris × 227 kolom` (`Graduate = 1.767`, `Dropout = 1.137`)
   * **Train Set Sesudah SMOTE (`X_train_smote`):** `3.534 baris × 227 kolom` (**Seimbang 50:50** $\rightarrow$ `Graduate = 1.767`, `Dropout = 1.767`)
   * **Test Set Murni (`X_test_encoded`):** `726 baris × 227 kolom` (**Tidak di-SMOTE** $\rightarrow$ `Graduate = 442`, `Dropout = 284`)
-* **Output Tersimpan di [`processed_data/`](processed_data/):**
-  * `X_train_smote.csv` & `y_train_smote.csv` (Dipakai untuk *training* model)
-  * `X_test_encoded.csv` & `y_test.csv` (Dipakai untuk evaluasi *test set* murni)
-  * `X_train_encoded.csv` & `y_train.csv` (Data latih terenkode sebelum SMOTE)
-  * `X_train_raw.csv` & `X_test_raw.csv` (Data asli 36 fitur sebelum *One-Hot Encoding*)
-  * `preprocessor.joblib` (Pipeline `ColumnTransformer` yang sudah di-*fit* pada `X_train`)
+* **Output Tersimpan Rapi per Tahapan di [`processed_data/`](processed_data/):**
+  ```text
+  processed_data/
+  ├── 1_raw_split/                  # Tahap 2.1: Hasil Split 80:20 Sebelum Encoding (36 Fitur Asli)
+  │   ├── X_train_raw.csv           # 2.904 baris × 36 kolom
+  │   ├── y_train.csv               # 2.904 baris × 1 kolom
+  │   ├── X_test_raw.csv            # 726 baris × 36 kolom
+  │   └── y_test.csv                # 726 baris × 1 kolom
+  │
+  ├── 2_encoded/                    # Tahap 2.2: Hasil One-Hot Encoding & Scaling (227 Fitur)
+  │   ├── X_train_encoded.csv       # 2.904 baris × 227 kolom (Sebelum SMOTE)
+  │   ├── y_train.csv               # 2.904 baris × 1 kolom
+  │   ├── X_test_encoded.csv        # 726 baris × 227 kolom (Data Uji Murni Bebas Leakage)
+  │   ├── y_test.csv                # 726 baris × 1 kolom
+  │   └── preprocessor.joblib       # Pipeline ColumnTransformer yang di-fit pada X_train
+  │
+  └── 3_train_smote/                # Tahap 2.3: Hasil Balancing SMOTE 50:50 (Siap Training Model)
+      ├── X_train_smote.csv         # 3.534 baris × 227 kolom (1.767 Graduate : 1.767 Dropout)
+      └── y_train_smote.csv         # 3.534 baris × 1 kolom
+  ```
 
 ---
 
@@ -78,42 +92,22 @@ Dokumen ini berfungsi sebagai **Catatan Progres & Panduan Handover Tim** setelah
 
 ---
 
+### ✅ Tahap 4 & Tahap 5: Integrasi Mesin Penjelas (`SHAP`) & Rule-Engine Rekomendasi
+* **File Eksekusi:** [`predictor.py`](predictor.py)
+* **Komponen Utama yang Sudah Dibuat:**
+  1. **`DropoutPrescriptivePredictor` (`shap.TreeExplainer`):**
+     * Me-*load* `model/random_forest_dropout.joblib` dan `processed_data/2_encoded/preprocessor.joblib`.
+     * Menerima 1 baris data mahasiswa (36 fitur asli), mentransformasikannya ke 227 kolom terenkode, menghitung probabilitas *Dropout*, dan mengekstrak nilai SHAP kelas `Dropout = 1`.
+     * Mengagregasikan kembali 200 sub-kolom *One-Hot Encoding* ke **36 nama fitur induk asli**, lalu mengurutkan **Top 3 fitur dengan nilai SHAP absolut (`|SHAP|`) tertinggi**.
+  2. **`generate_recommendations()` (Rule-Engine Logika Bisnis):**
+     * Menerjemahkan Top 3 fitur SHAP beserta nilai aktual mahasiswa & ambang probabilitas (`> 70%`) menjadi kalimat rekomendasi intervensi preskriptif (misal jika `Debtor == 1` & probabilitas DO `> 70%` $\rightarrow$ *"Rekomendasi: Jadwalkan pertemuan dengan bagian keuangan untuk restrukturisasi pembayaran."*).
+* **Output Contoh JSON Tersimpan di:** `model/sample_prediction_output.json` (siap menjadi kontrak response untuk Tahap 6 API Backend).
+
+---
+
 ## BAGIAN 2: APA YANG AKAN DILAKUKAN SELANJUTNYA (TUGAS LANJUTAN TIM 📋)
 
-Berikut adalah **4 tahap selanjutnya** yang harus dikerjakan secara berurutan oleh rekan tim:
-
-### 📌 Tahap 4: Integrasi Mesin Penjelas (SHAP)
-* **Target File:** Buat/perbarui [`predictor.py`](predictor.py) *(Catatan: file `predictor.py` yang ada saat ini masih versi regresi lama dan perlu ditulis ulang)*.
-* **Spesifikasi Teknis:**
-  1. Load `model/random_forest_dropout.joblib` dan `processed_data/preprocessor.joblib` (atau langsung load `model/dropout_classifier_bundle.joblib`).
-  2. Inisialisasi `explainer = shap.TreeExplainer(rf_model)` khusus untuk arsitektur berbasis pohon (*tree-based*).
-  3. Buat fungsi inferensi (misal `predict_single_student(student_dict: dict)`) yang menerima **1 baris data mahasiswa** (36 fitur mentah):
-     * Transformasikan input 1 baris tersebut menggunakan `preprocessor.transform(df_input)` menjadi 227 kolom terenkode.
-     * Hitung probabilitas prediksi *Dropout* (`rf_model.predict_proba(X_encoded)[0, 1]`).
-     * Hitung nilai SHAP (`shap_values = explainer.shap_values(X_encoded)` untuk kelas positif `Dropout = 1`).
-     * **Penting (Agregasi Fitur OHE):** Karena fitur kategorikal seperti `Course` dipecah menjadi beberapa kolom One-Hot (misal `Course_171`, `Course_9254`), jumlahkan nilai SHAP dari sub-kolom One-Hot yang berasal dari fitur induk yang sama agar kembali ke **36 nama fitur asli**.
-     * Urutkan berdasarkan nilai absolut SHAP tertinggi (`|SHAP|`) dan keluarkan **daftar 3 fitur teratas (Top 3 SHAP Features)** beserta nilai asli fitur dan nilai kontribusi SHAP-nya.
-
----
-
-### 📌 Tahap 5: Pembangunan Rule-Engine Rekomendasi (Logika Bisnis)
-* **Target File:** Di dalam [`predictor.py`](predictor.py) atau modul khusus `recommendation_engine.py`.
-* **Spesifikasi Teknis:**
-  1. Buat fungsi *mapping* sederhana (menggunakan blok `if-else` atau `dictionary`) yang menerima:
-     * Probabilitas prediksi *Dropout* (`prob_dropout`)
-     * Daftar **3 fitur teratas dari SHAP** beserta nilai aktual mahasiswa pada fitur tersebut.
-  2. Terjemahkan kondisi fitur + tingkat risiko menjadi **kalimat aksi intervensi konkret**:
-     * **Contoh Aturan Finansial:**
-       * Jika fitur penyumbang masuk Top 3 adalah `Debtor == 1` dan model memprediksi probabilitas DO `> 70%` (`0.70`), kembalikan string:
-         > `"Rekomendasi: Jadwalkan pertemuan dengan bagian keuangan untuk restrukturisasi pembayaran."`
-       * Jika `Tuition fees up to date == 0`, kembalikan rekomendasi pengingat tunggakan UKT / bantuan finansial darurat.
-       * Jika `Scholarship holder == 0` dengan risiko ekonomi tinggi, rekomendasikan pengajuan beasiswa internal.
-     * **Contoh Aturan Akademik (`Curricular units 1st/2nd sem approved / grade` rendah):**
-       * Rekomendasikan *academic mentoring*, konseling Dosen Pembimbing Akademik (PA), atau evaluasi beban SKS.
-     * **Contoh Aturan Demografi/Admisi (`Age at enrollment`, `Displaced`, `Admission grade`):**
-       * Rekomendasikan program adaptasi mahasiswa baru / kelas matrikulasi.
-
----
+Berikut adalah **2 tahap terakhir** yang siap dilanjutkan:
 
 ### 📌 Tahap 6: Pembuatan API Backend (Decoupled Architecture)
 * **Target File:** Buat `api.py` (menggunakan **FastAPI** atau **Flask** di Python, atau `net/http` di Go).
@@ -181,4 +175,7 @@ Berikut adalah **4 tahap selanjutnya** yang harus dikerjakan secara berurutan ol
 
 # 2. Jalankan Training Decision Tree vs Random Forest, Evaluasi Test Murni & Serialisasi Model
 .venv/bin/python train_and_compare.py
+
+# 3. Jalankan Prediksi 1 Mahasiswa + Penjelasan Top 3 SHAP + Rule-Engine Rekomendasi
+.venv/bin/python predictor.py
 ```
